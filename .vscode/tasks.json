@@ -1,0 +1,58 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Install dependencies",
+      "type": "shell",
+      "command": "npm",
+      "args": [
+        "install"
+      ],
+      "windows": {
+        "command": "npm.cmd"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Start development",
+      "type": "shell",
+      "command": "npm",
+      "args": [
+        "run",
+        "dev"
+      ],
+      "windows": {
+        "command": "npm.cmd"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Type check",
+      "type": "shell",
+      "command": "npm",
+      "args": [
+        "run",
+        "typecheck"
+      ],
+      "windows": {
+        "command": "npm.cmd"
+      },
+      "problemMatcher": [
+        "$tsc"
+      ]
+    },
+    {
+      "label": "Build",
+      "type": "shell",
+      "command": "npm",
+      "args": [
+        "run",
+        "build"
+      ],
+      "windows": {
+        "command": "npm.cmd"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

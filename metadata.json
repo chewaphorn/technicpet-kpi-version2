@@ -1,0 +1,6 @@
+{
+  "name": "Technic Pet KPI Management",
+  "description": "Executive logistics, warehouse, sales, and delivery KPI management and real-time tracking dashboard for Technic Pet Enterprise Logistics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

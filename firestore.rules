@@ -1,0 +1,67 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function googleUser() {
+      return request.auth != null && request.auth.token.email is string &&
+        request.auth.token.email_verified == true &&
+        request.auth.token.firebase.sign_in_provider == 'google.com';
+    }
+    function active() {
+      return googleUser() &&
+        exists(/databases/$(database)/documents/authorized_users/$(request.auth.token.email)) &&
+        get(/databases/$(database)/documents/authorized_users/$(request.auth.token.email)).data.email == request.auth.token.email &&
+        get(/databases/$(database)/documents/authorized_users/$(request.auth.token.email)).data.status == 'active';
+    }
+    function admin() {
+      return active() && get(/databases/$(database)/documents/authorized_users/$(request.auth.token.email)).data.role == 'admin';
+    }
+    match /authorized_users/{email} {
+      allow get: if googleUser() && (request.auth.token.email == email || admin());
+      allow list: if admin();
+      allow create, update: if admin() && request.resource.data.email == email &&
+        request.resource.data.id == email &&
+        request.resource.data.role in ['admin', 'sales_manager', 'warehouse_supervisor', 'logistics_coordinator', 'viewer'] &&
+        request.resource.data.status in ['active', 'inactive'] &&
+        request.resource.data.name is string && request.resource.data.allowedScreens is list &&
+        request.resource.data.allowedScreens.hasOnly(['overview', 'sales', 'warehouse', 'delivery', 'import']) &&
+        (email != request.auth.token.email || (request.resource.data.role == 'admin' && request.resource.data.status == 'active')) &&
+        (email != 'chewaphorn@tni.ac.th' || (request.resource.data.role == 'admin' && request.resource.data.status == 'active'));
+      allow delete: if admin() && email != 'chewaphorn@tni.ac.th' && email != request.auth.token.email;
+    }
+    // Compatibility mirror for existing account records; never used to grant access.
+    match /authorized_emails/{email} {
+      allow get: if googleUser() && (request.auth.token.email == email || admin());
+      allow list: if admin();
+      allow create, update: if admin() && request.resource.data.email == email &&
+        request.resource.data.keys().hasOnly(['email', 'status']) &&
+        request.resource.data.status in ['active', 'inactive'];
+      allow delete: if admin() && email != 'chewaphorn@tni.ac.th' && email != request.auth.token.email;
+    }
+    match /users/{uid} {
+      allow read: if active() && (request.auth.uid == uid || admin());
+      // Profiles are informational; only authorized_users can grant permissions.
+      allow create, update: if active() && request.auth.uid == uid && request.resource.data.uid == uid;
+      allow delete: if admin();
+    }
+    match /importBatches/{id} {
+      allow read, create: if admin();
+    }
+    match /kpiSummaries/{id} {
+      allow read, write: if admin();
+    }
+    match /settings/kpiTargets {
+      allow read: if active();
+      allow create, update: if admin() &&
+        request.resource.data.keys().hasOnly(['kpiTargetDays', 'slaTargetPercent', 'utilizationTarget', 'warehousePickingLeadTimeTarget', 'monthlySalesTarget', 'updatedBy', 'updatedAt']) &&
+        request.resource.data.kpiTargetDays is number && request.resource.data.kpiTargetDays > 0 &&
+        request.resource.data.warehousePickingLeadTimeTarget is number && request.resource.data.warehousePickingLeadTimeTarget > 0 &&
+        request.resource.data.monthlySalesTarget is number && request.resource.data.monthlySalesTarget > 0 &&
+        request.resource.data.slaTargetPercent is number && request.resource.data.slaTargetPercent >= 0 && request.resource.data.slaTargetPercent <= 100 &&
+        request.resource.data.utilizationTarget is number && request.resource.data.utilizationTarget >= 0 && request.resource.data.utilizationTarget <= 100 &&
+        request.resource.data.updatedBy == request.auth.uid;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

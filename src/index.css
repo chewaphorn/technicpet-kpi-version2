@@ -1,0 +1,132 @@
+@import "tailwindcss";
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    font-family: 'Prompt', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  html,
+  body {
+    font-family: 'Prompt', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button,
+  input,
+  optgroup,
+  select,
+  textarea {
+    font-family: 'Prompt', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+}
+
+/* Tabular numbers for KPI statistics & metrics */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Global PDF & Print Layout Formatting */
+@page {
+  size: A4 portrait;
+  margin: 12mm;
+}
+
+/* Explicit paper geometry shared by preview, download and browser print. */
+.pdf-report-source {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 186mm;
+  pointer-events: none;
+}
+
+.pdf-report-pages {
+  width: 210mm;
+  min-width: 210mm;
+  margin: 0 auto;
+  color: #1e293b;
+}
+
+.pdf-report-page {
+  position: relative;
+  box-sizing: border-box;
+  width: 210mm;
+  height: 297mm;
+  padding: 12mm 12mm 16mm;
+  margin-bottom: 24px;
+  background: white;
+  box-shadow: 0 2px 10px #0f172a20;
+}
+
+.pdf-page-content {
+  height: 100%;
+  display: flow-root;
+}
+
+.pdf-page-content > * + * { margin-top: 14px; }
+.pdf-running-header {
+  padding-bottom: 8px;
+  border-bottom: 1px solid #cbd5e1;
+  color: #0a2558;
+  font-size: 11px;
+  font-weight: 700;
+}
+.pdf-page-number {
+  position: absolute;
+  bottom: 6mm;
+  left: 12mm;
+  right: 12mm;
+  text-align: right;
+  color: #64748b;
+  font-size: 10px;
+}
+.pdf-report-page table { width: 100%; table-layout: fixed; }
+.pdf-report-page th, .pdf-report-page td { overflow-wrap: anywhere; }
+.pdf-report-page [data-pdf-table="sales-reps"] td:nth-child(2) { white-space: normal; }
+.pdf-report-page [data-pdf-table="sales-customers"] th:first-child,
+.pdf-report-page [data-pdf-table="sales-products"] th:first-child { width: 54%; }
+.pdf-report-page [data-pdf-table="sales-customers"] th:last-child { width: 12%; }
+.pdf-report-page [data-pdf-table="sales-reps"] th:nth-child(2) { width: 23%; }
+.pdf-report-page [data-pdf-table="sales-reps"] th:nth-child(3) { width: 20%; }
+
+@media print {
+  body:has(> .pdf-report-modal) > :not(.pdf-report-modal) { display: none !important; }
+  .pdf-report-modal, .pdf-report-dialog, .pdf-preview-scroll {
+    display: block !important;
+    position: static !important;
+    width: 210mm !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: white !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    animation: none !important;
+    transform: none !important;
+  }
+  .pdf-report-dialog > :not(.pdf-preview-scroll), .pdf-report-source { display: none !important; }
+  .pdf-report-page {
+    margin: 0;
+    box-shadow: none;
+    break-inside: avoid;
+    break-after: page;
+  }
+  .pdf-report-page:last-child { break-after: auto; }
+}
+
+@media print {
+  html, body {
+    background: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+

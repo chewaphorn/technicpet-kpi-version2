@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "importBatches": {
+      "title": "Import Batches",
+      "description": "Daily imported batch datasets of Sales Orders, Picking Lists, and Delivery Tags",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "importedBy": { "type": "string" },
+        "salesFileName": { "type": "string" },
+        "salesRowCount": { "type": "number" },
+        "pickingFileName": { "type": "string" },
+        "pickingRowCount": { "type": "number" },
+        "deliveryFileName": { "type": "string" },
+        "deliveryRowCount": { "type": "number" },
+        "status": { "type": "string" }
+      },
+      "required": ["createdAt", "status"]
+    },
+    "salesOrders": {
+      "title": "Sales Orders",
+      "description": "Sales order documents and billing records",
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string" },
+        "orderDate": { "type": "string" },
+        "customerName": { "type": "string" },
+        "itemsCount": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "salesperson": { "type": "string" },
+        "status": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orderId", "customerName", "status"]
+    },
+    "deliveryTrips": {
+      "title": "Delivery Trips",
+      "description": "Fleet dispatch trips and tracking logs",
+      "type": "object",
+      "properties": {
+        "tripId": { "type": "string" },
+        "orderId": { "type": "string" },
+        "licensePlate": { "type": "string" },
+        "driverName": { "type": "string" },
+        "driverPhone": { "type": "string" },
+        "departureTime": { "type": "string" },
+        "eta": { "type": "string" },
+        "status": { "type": "string" },
+        "isDelayed": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tripId", "licensePlate", "status"]
+    },
+    "kpiSummaries": {
+      "title": "KPI Summaries",
+      "description": "Computed operational KPIs and analytics snapshots",
+      "type": "object",
+      "properties": {
+        "dateKey": { "type": "string" },
+        "totalRevenue": { "type": "number" },
+        "onTimePercentage": { "type": "number" },
+        "averageDeliveryDays": { "type": "number" },
+        "completedOrders": { "type": "number" },
+        "pendingOrders": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["dateKey", "onTimePercentage"]
+    }
+  },
+  "firestore": {
+    "/importBatches/{batchId}": {
+      "entity": "importBatches",
+      "description": "Daily import batch records"
+    },
+    "/salesOrders/{orderId}": {
+      "entity": "salesOrders",
+      "description": "Sales orders collection"
+    },
+    "/deliveryTrips/{tripId}": {
+      "entity": "deliveryTrips",
+      "description": "Fleet delivery trips collection"
+    },
+    "/kpiSummaries/{summaryId}": {
+      "entity": "kpiSummaries",
+      "description": "KPI summary logs"
+    }
+  }
+}
