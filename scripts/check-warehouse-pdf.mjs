@@ -28,23 +28,26 @@ compiled.paths = Module._nodeModulePaths(root);
 compiled._compile(result.outputFiles[0].text, compiled.filename);
 const { PDFReportPreviewModal, WarehouseReportView } = compiled.exports;
 const doc = (docNo, completedDate, extra = {}) => ({
-  id: docNo, docNo, customer: 'Example', date: '2026-08-10', receivedBookingDate: '2026-08-10',
+  id: docNo, docNo, customer: 'Example', date: '2026-08-10', receivedBookingDate: '2026-08-10', salesOrderDate: '2026-08-10',
   completedDate, startTime: '', itemsCount: 1, status: completedDate ? 'completed' : 'pending',
   statusLabel: '', pickerName: '', priority: 'normal', ...extra,
 });
 const plain = html => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
 const cases = [
-  { name: 'same-day, target, overdue, duplicate and missing source dates', docs: [doc('A','2026-08-10'), doc('B','2026-08-12'), doc('C','2026-08-15'), doc('A','2026-08-10'), doc('D',undefined), doc('E','2026-08-12',{receivedBookingDate:'',date:''})], count: 3, onPlan: 2, pct: '66.7' },
-  { name: 'no data', docs: [], count: 0, onPlan: 0, pct: '0' },
-  { name: 'all on plan including target boundary', docs: [doc('A','2026-08-10'),doc('B','2026-08-13')], count: 2, onPlan: 2, pct: '100.0' },
-  { name: 'all overdue', docs: [doc('A','2026-08-14')], count: 1, onPlan: 0, pct: '0.0' },
+  { name: 'same-day, target, overdue, duplicate and missing receipt date', docs: [doc('A','2026-08-10'), doc('B','2026-08-12'), doc('C','2026-08-15'), doc('A','2026-08-10'), doc('D',undefined), doc('E','2026-08-12',{receivedBookingDate:''})], total: 5, completed: 4, leadTimeCount: 4, min: 0, max: 5 },
+  { name: 'no data', docs: [], total: 0, completed: 0, leadTimeCount: 0, min: '-', max: '-' },
+  { name: 'same-day and three-day lead times', docs: [doc('A','2026-08-10'),doc('B','2026-08-13')], total: 2, completed: 2, leadTimeCount: 2, min: 0, max: 3 },
+  { name: 'four-day maximum', docs: [doc('A','2026-08-14')], total: 1, completed: 1, leadTimeCount: 1, min: 4, max: 4 },
 ];
 for (const c of cases) {
   const pdf = plain(renderToStaticMarkup(React.createElement(PDFReportPreviewModal,{isOpen:true,onClose(){},department:'warehouse',warehouseDocs:c.docs})));
   const dashboard = plain(renderToStaticMarkup(React.createElement(WarehouseReportView,{docs:c.docs,onSelectDoc(){}})));
-  assert.ok(!pdf.includes('99.4%') && !pdf.includes('Picking SLA'));
-  assert.ok(pdf.includes(`ตรงตามแผน ≤ 3 วัน ${c.pct}% ${c.onPlan} จาก ${c.count} บิล`), c.name + ': PDF mismatch');
-  assert.ok(dashboard.includes(`${c.onPlan} จาก ${c.count} บิล (${c.pct}%)`), c.name + ': dashboard mismatch');
+  assert.ok(pdf.includes(`รับเข้าใบจองทั้งหมด ${c.total} ใบ`), c.name + ': PDF inbound total mismatch');
+  assert.ok(pdf.includes(`จัดได้ทั้งหมด ${c.completed} ใบ`), c.name + ': PDF completed total mismatch');
+  assert.ok(pdf.includes(`ค้างจัดทั้งหมด ${c.total - c.completed} ใบ`), c.name + ': PDF pending total mismatch');
+  assert.ok(pdf.includes(`คำนวณได้ ${c.leadTimeCount} / ${c.completed} บิลจัดเสร็จ`), c.name + ': PDF lead-time coverage mismatch');
+  assert.ok(pdf.includes(`MIN (ต่ำสุด) ${c.min} วัน MAX (สูงสุด) ${c.max} วัน`), c.name + ': PDF min/max mismatch');
+  assert.ok(dashboard.includes(`คำนวณได้ ${c.leadTimeCount} / ${c.completed} บิลจัดเสร็จ`), c.name + ': dashboard coverage mismatch');
   console.log('PASS:',c.name);
 }
 // Missing booking dates must not bypass the status filter.
@@ -53,8 +56,10 @@ const filtered = plain(renderToStaticMarkup(React.createElement(PDFReportPreview
   warehouseDocs:[doc('A','2026-08-12',{date:'',receivedBookingDate:''})],
   reportFilters:{department:'warehouse',status:'pending_all'},
 })));
-assert.ok(filtered.includes('ตรงตามแผน ≤ 3 วัน 0% 0 จาก 0 บิล'));
-assert.ok(filtered.includes('สำเร็จ 0 ใบ (0%)'));
+assert.ok(filtered.includes('รับเข้าใบจองทั้งหมด 0 ใบ'));
+assert.ok(filtered.includes('จัดได้ทั้งหมด 0 ใบ'));
+assert.ok(filtered.includes('ค้างจัดทั้งหมด 0 ใบ'));
+assert.ok(filtered.includes('คำนวณได้ 0 / 0 บิลจัดเสร็จ'));
 console.log('PASS: missing-date records obey status filter');
 
 const imported = compiled.exports.analyzeWarehouseData([{

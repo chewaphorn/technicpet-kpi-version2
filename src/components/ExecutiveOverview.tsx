@@ -1,5 +1,5 @@
 import { BookingTrackingSection } from './BookingTrackingSection';
-import { aggregateWarehouseDocs, filterWarehouseDocs, aggregateDeliveryTrips, filterDeliveryTrips, calculateDeliveryMetrics, isCompletedTrip } from '../utils/logisticsReportMetrics';
+import { aggregateWarehouseDocs, filterWarehouseDocs, calculateWarehouseMetrics, isWarehouseDocCompleted, aggregateDeliveryTrips, filterDeliveryTrips, calculateDeliveryMetrics, isCompletedTrip } from '../utils/logisticsReportMetrics';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { normalizeDateToISO, getMinMaxDates } from '../utils/dateUtils';
 import { calculateDaysDiff } from '../utils/dataProcessor';
@@ -477,12 +477,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
       const status = normalizeStatus(order.status);
       return ['เสร็จ', 'สำเร็จ', 'completed', 'ส่งแล้ว', 'ส่งมอบ', 'อนุมัติ'].some((label) => status.includes(label));
     };
-    const isCompletedWarehouseDoc = (doc: WarehouseDoc) => {
-      const status = normalizeStatus(doc.status);
-      const label = normalizeStatus(doc.statusLabel);
-      return status === 'completed' || status === 'verified' ||
-        ['จัดเสร็จแล้ว', 'completed', 'verified'].some((value) => label.includes(value));
-    };
+    const isCompletedWarehouseDoc = isWarehouseDocCompleted;
     const hasDepartment = (department: string) =>
       appliedDept === 'ทั้งหมด' || appliedDept === department;
     const events: TrendEvent[] = [];
@@ -538,7 +533,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
       overviewWarehouseDocs.forEach((doc, index) => {
         const completed = isCompletedWarehouseDoc(doc);
         const pickingLeadTimeDays = completed
-          ? calculateDaysDiff(doc.receivedBookingDate || doc.date, doc.completedDate)
+          ? calculateDaysDiff(doc.salesOrderDate, doc.completedDate)
           : undefined;
         const validPickingLeadTimeDays = pickingLeadTimeDays !== undefined && pickingLeadTimeDays >= 0
           ? pickingLeadTimeDays
@@ -833,22 +828,12 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
       : 0;
 
     // 2. Warehouse Metrics
-    const totalDocs = overviewWarehouseDocs.length;
-    const computedCompletedWarehouseDocs = overviewWarehouseDocs.filter(
-      (d) => d.status === 'completed' || d.status === 'verified'
-    ).length;
-    const completedWarehouseDocs = computedCompletedWarehouseDocs;
-    const pendingDocs = overviewWarehouseDocs.filter(d => d.status === 'pending' || d.status === 'picking').length;
-    const pickingCount = overviewWarehouseDocs.filter((d) => d.status === 'picking').length;
-    const waitingCount = Math.max(0, pendingDocs - pickingCount);
-    const warehouseDates = new Set(overviewWarehouseDocs.map(d => d.date).filter(Boolean));
-    const warehouseWorkDays = warehouseDates.size;
-    const dailyInboundBookings = totalDocs > 0 && warehouseWorkDays > 0 ? Math.round(totalDocs / warehouseWorkDays) : 0;
-    const dailyPickedOrders = completedWarehouseDocs > 0 && warehouseWorkDays > 0 ? Math.round(completedWarehouseDocs / warehouseWorkDays) : 0;
-    const transferredCount = overviewWarehouseDocs.filter(d => d.transferredToDelivery === true).length;
-    const transferredPercent = completedWarehouseDocs > 0 ? +(transferredCount / completedWarehouseDocs * 100).toFixed(1) : 0;
+    const warehouseMetrics = calculateWarehouseMetrics(overviewWarehouseDocs);
+    const totalDocs = warehouseMetrics.totalDocsCount;
+    const completedWarehouseDocs = warehouseMetrics.completedDocsCount;
+    const pendingDocs = warehouseMetrics.pendingDocsCount;
     const pickingSpeed = warehouseSummary?.avgPickingMinutes || '-';
-    const stockReadyPercent = totalDocs > 0 ? +(completedWarehouseDocs / totalDocs * 100).toFixed(1) : 0;
+    const stockReadyPercent = Number(warehouseMetrics.completionPercent);
 
     // 3. Delivery Metrics (การจัดส่ง: จำนวนบิลทั้งหมด, จำนวนบิลที่ส่งสำเร็จ, บิลที่ค้างส่ง / ส่งล่าช้า)
     const totalDeliveryBills = overviewDeliveryTrips.length;
@@ -888,12 +873,6 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
         totalDocs,
         completedWarehouseDocs,
         pendingDocs,
-        pickingCount,
-        waitingCount,
-        dailyInboundBookings,
-        dailyPickedOrders,
-        transferredCount,
-        transferredPercent,
         pickingSpeed,
         stockReadyPercent,
       },
@@ -1339,43 +1318,41 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <ExecutiveKPICard
-                id="card-warehouse-pending-orders"
-                title="จำนวนรับเข้าใบจอง / วัน"
-                value={`${departmentMetrics.warehouse.dailyInboundBookings} ใบ / วัน`}
-                badge={{ 
-                  label: 'ข้อมูลตามรายงานคลัง', variant: 'blue'
-                }}
+                id="card-warehouse-inbound-total"
+                title="จำนวนรับเข้าใบจองทั้งหมด"
+                value={`${departmentMetrics.warehouse.totalDocs.toLocaleString()} ใบ`}
+                badge={{ label: 'ตามช่วงวันที่เลือก', variant: 'blue' }}
                 icon={<Inbox className="w-4 h-4" />}
-                iconBgClass="bg-amber-50"
-                iconColorClass="text-amber-700"
-                note={`สะสมทั้งหมด ${departmentMetrics.warehouse.totalDocs} ใบ`}
-                noteIcon={<Inbox className="w-3.5 h-3.5 text-blue-600" />}
+                iconBgClass="bg-blue-50"
+                iconColorClass="text-blue-700"
+                note="จำนวนใบจองในรายงานคลัง"
+                noteIcon={<Calendar className="w-3.5 h-3.5 text-blue-600" />}
                 onClick={() => onNavigateScreen?.('warehouse')}
               />
 
               <ExecutiveKPICard
-                id="card-warehouse-picking-time"
-                title="จำนวนที่จัดของได้ / วัน"
-                value={`${departmentMetrics.warehouse.dailyPickedOrders} ใบ / วัน`}
-                badge={{ label: `สำเร็จ ${departmentMetrics.warehouse.completedWarehouseDocs} ใบ`, variant: 'emerald' }}
-                icon={<Timer className="w-4 h-4" />}
-                iconBgClass="bg-teal-50"
-                iconColorClass="text-teal-700"
-                note={`อัตราจัดสำเร็จ ${departmentMetrics.warehouse.completedWarehouseDocs > 0 ? (departmentMetrics.warehouse.completedWarehouseDocs / Math.max(1, departmentMetrics.warehouse.totalDocs) * 100).toFixed(1) : '0'}%`}
+                id="card-warehouse-completed-total"
+                title="จำนวนที่จัดได้ทั้งหมด"
+                value={`${departmentMetrics.warehouse.completedWarehouseDocs.toLocaleString()} ใบ`}
+                badge={{ label: `สำเร็จ ${departmentMetrics.warehouse.stockReadyPercent}%`, variant: 'emerald' }}
+                icon={<CheckCircle2 className="w-4 h-4" />}
+                iconBgClass="bg-emerald-50"
+                iconColorClass="text-emerald-700"
+                note={`จาก ${departmentMetrics.warehouse.totalDocs.toLocaleString()} ใบรับเข้า`}
                 noteIcon={<CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
                 onClick={() => onNavigateScreen?.('warehouse')}
               />
 
               <ExecutiveKPICard
-                id="card-warehouse-inventory-ready"
-                title="จำนวนที่ส่งต่อฝ่ายขนส่ง"
-                value={`${departmentMetrics.warehouse.transferredCount} ใบ`}
-                badge={{ label: `${departmentMetrics.warehouse.transferredPercent}% ของที่จัดเสร็จ`, variant: 'blue' }}
-                icon={<Package className="w-4 h-4" />}
-                iconBgClass="bg-emerald-50"
-                iconColorClass="text-emerald-700"
-                note="ส่งต่อข้อมูลจากคลังไปฝ่ายขนส่งแล้ว"
-                noteIcon={<Truck className="w-3.5 h-3.5 text-indigo-600" />}
+                id="card-warehouse-pending-total"
+                title="เลขที่บิลที่ค้างจัดทั้งหมด"
+                value={`${departmentMetrics.warehouse.pendingDocs.toLocaleString()} ใบ`}
+                badge={{ label: 'รับเข้าลบจัดเสร็จ', variant: 'amber' }}
+                icon={<Clock className="w-4 h-4" />}
+                iconBgClass="bg-amber-50"
+                iconColorClass="text-amber-700"
+                note="ยังไม่จัดเสร็จตามช่วงวันที่เลือก"
+                noteIcon={<Clock className="w-3.5 h-3.5 text-amber-600" />}
                 onClick={() => onNavigateScreen?.('warehouse')}
               />
             </div>

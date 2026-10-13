@@ -36,12 +36,88 @@ test('date filtering never imports summary rows without a bill number', () => {
   assert.equal(result.totalOrders, 1);
   assert.equal(result.totalSalesAmount, 200);
 });
-test('warehouse aggregation joins the sales opening date by booking number', () => {
+test('warehouse aggregation does not source its opening date from the sales report', () => {
   const docs = api.aggregateWarehouseDocs(
     [{ docNo: ' bk001 ', customer: 'Customer A', status: 'pending', itemsCount: 1 }],
     [sales({ date: '15/08/2569' })]
   );
-  assert.equal(docs[0].salesOrderDate, '15/08/2569');
+  assert.equal(docs[0].salesOrderDate, undefined);
+});
+test('warehouse metrics summarize filtered records by booking date', () => {
+  const metrics = api.calculateWarehouseMetrics([
+    { docNo: 'BK1', date: '2026-08-10', receivedBookingDate: '2026-08-10', status: 'pending', transferredToDelivery: false },
+    { docNo: 'BK2', date: '2026-08-10', receivedBookingDate: '2026-08-10', status: 'completed', completedDate: '2026-08-12', salesOrderDate: '2026-08-11', transferredToDelivery: true },
+    { docNo: 'BK3', date: '2026-08-11', receivedBookingDate: '2026-08-11', status: 'picking', transferredToDelivery: false },
+  ]);
+  assert.deepEqual(metrics.dailySummaries, [
+    { date: '2026-08-11', inboundBookings: 1, pickedOrders: 0, transferredCount: 0, pendingCount: 1 },
+    { date: '2026-08-10', inboundBookings: 2, pickedOrders: 1, transferredCount: 1, pendingCount: 1 },
+  ]);
+  assert.deepEqual(metrics.monthlySummaries, [
+    { month: '2026-08', inboundBookings: 3, pickedOrders: 1, pendingCount: 2, completionRate: 33.3 },
+  ]);
+});
+test('warehouse completed-card count matches measurable lead-time denominator despite stale status', () => {
+test('pending totals include every received bill without a completion date', () => {
+  const docs = [
+    { docNo: 'BK-DONE', date: '2026-08-10', completedDate: '2026-08-12', salesOrderDate: '2026-08-10', status: 'completed' },
+    { docNo: 'BK-PENDING', date: '2026-08-10', salesOrderDate: '2026-08-10', status: 'pending' },
+    { docNo: 'BK-UNKNOWN', date: '2026-08-10', salesOrderDate: '2026-08-10', status: 'unknown' },
+  ];
+  const metrics = api.calculateWarehouseMetrics(docs);
+  assert.equal(metrics.totalDocsCount, 3);
+  assert.equal(metrics.completedDocsCount, 1);
+  assert.equal(metrics.pendingDocsCount, 2);
+  assert.equal(metrics.totalDocsCount, metrics.completedDocsCount + metrics.pendingDocsCount);
+  assert.equal(metrics.dailySummaries[0].pendingCount, 2);
+  assert.equal(api.filterWarehouseDocs(docs, { status: 'pending_all' }).length, 2);
+});
+  const [doc] = api.aggregateWarehouseDocs([
+    {
+      docNo: 'BK-COMPLETE',
+      date: '2026-08-10',
+      receivedBookingDate: '2026-08-10',
+      salesOrderDate: '2026-08-10',
+      completedDate: '2026-08-12',
+      status: 'pending',
+      statusLabel: 'รอจัดสินค้า',
+      itemsCount: 1,
+    },
+  ]);
+  const metrics = api.calculateWarehouseMetrics([doc]);
+  assert.equal(doc.status, 'completed');
+  assert.equal(metrics.completedDocsCount, 1);
+  assert.equal(metrics.pendingDocsCount, 0);
+  assert.equal(metrics.leadTimeRecords.length, 1);
+  assert.equal(metrics.onPlanLeadTimeCount, 1);
+  assert.equal(metrics.dailySummaries[0].pickedOrders, 1);
+  assert.equal(metrics.dailySummaries[0].pendingCount, 0);
+});
+test('warehouse minimum and maximum lead time use only completed bills in the selected date range', () => {
+  const docs = [
+    { docNo: 'BK1', date: '2026-08-02', salesOrderDate: '2026-08-01', completedDate: '2026-08-04', status: 'completed' },
+    { docNo: 'BK2', date: '2026-08-12', salesOrderDate: '2026-08-10', completedDate: '2026-08-16', status: 'completed' },
+    { docNo: 'BK4', date: '2026-08-14', salesOrderDate: '2026-08-10', completedDate: '2026-08-16', status: 'completed' },
+    { docNo: 'BK3', date: '2026-09-02', salesOrderDate: '2026-09-01', completedDate: '2026-09-11', status: 'completed' },
+  ];
+  const selectedPeriod = api.filterWarehouseDocs(docs, { fromDate: '2026-08-01', toDate: '2026-08-31' });
+  const metrics = api.calculateWarehouseMetrics(selectedPeriod);
+  assert.equal(metrics.leadTimeStats.count, 3);
+  assert.equal(metrics.leadTimeStats.min, 3);
+  assert.equal(metrics.leadTimeStats.max, 6);
+  assert.deepEqual(metrics.maximumLeadTimeRecords.map(({ doc }) => doc.docNo), ['BK2', 'BK4']);
+});
+test('lead-time coverage distinguishes completed bills from bills with both dates', () => {
+  const metrics = api.calculateWarehouseMetrics([
+    { docNo: 'BK1', salesOrderDate: '2026-08-01', completedDate: '2026-08-04', status: 'completed' },
+    { docNo: 'BK2', salesOrderDate: '', completedDate: '2026-08-05', status: 'completed' },
+  ]);
+  assert.equal(metrics.completedDocsCount, 2);
+  assert.equal(metrics.leadTimeStats.count, 1);
+  assert.equal(metrics.completedDocsCount - metrics.leadTimeStats.count, 1);
+  assert.equal(metrics.leadTimeUnavailableDocs.length, 1);
+  assert.equal(metrics.leadTimeUnavailableDocs[0].doc.docNo, 'BK2');
+  assert.equal(metrics.leadTimeUnavailableDocs[0].reason, 'ไม่มีวันที่เปิดบิลขาย');
 });
 test('bill identity and document classification do not depend on letter case or an R inside ORDER', () => {
   const result = api.analyzeSalesData([sales({ docNo: 'order-1' }), sales({ docNo: 'ORDER-1' })]);

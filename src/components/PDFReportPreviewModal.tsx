@@ -161,11 +161,8 @@ const PDFReportContent: React.FC<PDFReportPreviewModalProps> = ({
   const {
     totalDocsCount: totalWarehouseDocs, completedDocsCount: completedWarehouseDocs,
     pendingDocsCount: pendingWarehouseDocs, completionPercent: warehouseCompletionRate,
-    leadTimeRecords: warehouseLeadTimeRecords, avgLeadTimeDays,
-    onPlanLeadTimeCount: warehouseOnPlanCount, onPlanLeadTimePercent: warehouseOnPlanPercent,
-    delayedDocsCount: delayedWarehouseDocsCount, dailyInboundBookings: dailyWarehouseInbound,
-    dailyPickedOrders: dailyWarehousePicked, transferredCount: transferredToDeliveryCount,
-    transferredPct: transferredRate, leadTimeStats: warehouseLeadTimeStats,
+    leadTimeUnavailableDocs: warehouseLeadTimeUnavailableDocs,
+    leadTimeStats: warehouseLeadTimeStats, monthlySummaries: warehouseMonthlySummaries,
   } = React.useMemo(() => calculateWarehouseMetrics(filteredWarehouseDocs, warehousePickingLeadTimeTarget), [filteredWarehouseDocs, warehousePickingLeadTimeTarget]);
 
   const groupedDeliveryTrips = React.useMemo(() => aggregateDeliveryTrips(safeDeliveryTrips, safeSalesOrders), [safeDeliveryTrips, safeSalesOrders]);
@@ -695,62 +692,63 @@ const PDFReportContent: React.FC<PDFReportPreviewModalProps> = ({
                   </span>
                 </div>
 
-                {/* Warehouse Core 3 Requested Metrics */}
+                {/* Warehouse summary totals */}
                 <div className="grid grid-cols-3 gap-2.5 text-center">
                   <div className="p-2.5 bg-blue-50/80 rounded-xl border border-blue-200">
-                    <p className="text-[10px] font-bold text-blue-900 uppercase whitespace-nowrap">1. รับเข้าใบจอง / วัน</p>
-                    <p className="text-base font-black text-blue-700 mt-0.5 whitespace-nowrap">
-                      {dailyWarehouseInbound.toLocaleString()} <span className="text-xs font-normal">ใบ/วัน</span>
-                    </p>
-                    <p className="text-[9px] text-slate-500 whitespace-nowrap">รวม {totalWarehouseDocs.toLocaleString()} ใบ</p>
+                    <p className="text-[10px] font-bold text-blue-900 uppercase whitespace-nowrap">รับเข้าใบจองทั้งหมด</p>
+                    <p className="text-base font-black text-blue-700 mt-0.5 whitespace-nowrap">{totalWarehouseDocs.toLocaleString()} <span className="text-xs font-normal">ใบ</span></p>
+                    <p className="text-[9px] text-slate-500 whitespace-nowrap">ตามช่วงวันที่เลือก</p>
                   </div>
                   <div className="p-2.5 bg-emerald-50/80 rounded-xl border border-emerald-200">
-                    <p className="text-[10px] font-bold text-emerald-900 uppercase whitespace-nowrap">2. จัดของได้ / วัน</p>
-                    <p className="text-base font-black text-emerald-700 mt-0.5 whitespace-nowrap">
-                      {dailyWarehousePicked.toLocaleString()} <span className="text-xs font-normal">ใบ/วัน</span>
-                    </p>
-                    <p className="text-[9px] text-slate-500 whitespace-nowrap">สำเร็จ {completedWarehouseDocs.toLocaleString()} ใบ ({warehouseCompletionRate}%)</p>
+                    <p className="text-[10px] font-bold text-emerald-900 uppercase whitespace-nowrap">จัดได้ทั้งหมด</p>
+                    <p className="text-base font-black text-emerald-700 mt-0.5 whitespace-nowrap">{completedWarehouseDocs.toLocaleString()} <span className="text-xs font-normal">ใบ</span></p>
+                    <p className="text-[9px] text-slate-500 whitespace-nowrap">สำเร็จ {warehouseCompletionRate}%</p>
                   </div>
-                  <div className="p-2.5 bg-indigo-50/80 rounded-xl border border-indigo-200">
-                    <p className="text-[10px] font-bold text-indigo-900 uppercase whitespace-nowrap">3. ส่งต่อฝ่ายขนส่ง</p>
-                    <p className="text-base font-black text-indigo-700 mt-0.5 whitespace-nowrap">
-                      {transferredToDeliveryCount.toLocaleString()} <span className="text-xs font-normal">ใบ</span>
-                    </p>
-                    <p className="text-[9px] text-slate-500 whitespace-nowrap">คิดเป็น {transferredRate}% ของที่จัดเสร็จ</p>
+                  <div className="p-2.5 bg-amber-50/80 rounded-xl border border-amber-200">
+                    <p className="text-[10px] font-bold text-amber-900 uppercase whitespace-nowrap">ค้างจัดทั้งหมด</p>
+                    <p className="text-base font-black text-amber-700 mt-0.5 whitespace-nowrap">{pendingWarehouseDocs.toLocaleString()} <span className="text-xs font-normal">ใบ</span></p>
+                    <p className="text-[9px] text-slate-500 whitespace-nowrap">รับเข้าทั้งหมด - จัดเสร็จทั้งหมด</p>
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs">
-                  บิลค้างจัด <strong>{pendingWarehouseDocs.toLocaleString()} ใบ</strong>
+                <div className="rounded-xl border border-slate-200 overflow-hidden" data-pdf-section>
+                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-200">
+                    <p className="text-[11px] font-bold text-slate-700">แนวโน้ม KPI คลังสินค้ารายเดือน</p>
+                  </div>
+                  <table className="w-full text-left text-[10px]">
+                    <thead className="bg-white text-slate-600 font-bold border-b border-slate-100">
+                      <tr>
+                        <th className="py-1.5 px-3">เดือนรับใบจอง</th>
+                        <th className="py-1.5 px-3 text-right">รับเข้า</th>
+                        <th className="py-1.5 px-3 text-right">จัดเสร็จ</th>
+                        <th className="py-1.5 px-3 text-right">ค้างจัด</th>
+                        <th className="py-1.5 px-3 text-right">อัตราจัดสำเร็จ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {warehouseMonthlySummaries.length === 0 ? (
+                        <tr><td colSpan={5} className="py-3 px-3 text-center text-slate-400">ไม่มีข้อมูลตามตัวกรอง</td></tr>
+                      ) : warehouseMonthlySummaries.map((month) => (
+                        <tr key={month.month}>
+                          <td className="py-1.5 px-3">{new Intl.DateTimeFormat('th-TH', { month: 'short', year: 'numeric' }).format(new Date(Number(month.month.slice(0, 4)), Number(month.month.slice(5, 7)) - 1, 1))}</td>
+                          <td className="py-1.5 px-3 text-right">{month.inboundBookings.toLocaleString()}</td>
+                          <td className="py-1.5 px-3 text-right">{month.pickedOrders.toLocaleString()}</td>
+                          <td className="py-1.5 px-3 text-right">{month.pendingCount.toLocaleString()}</td>
+                          <td className="py-1.5 px-3 text-right">{month.completionRate.toFixed(1)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                <LeadTimeSummary stats={warehouseLeadTimeStats} />
-                {/* Warehouse completion and picking lead-time summary */}
-                <div className="space-y-1.5">
-                  <h4 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                    <Package className="w-3.5 h-3.5 text-blue-600" />
-                    <span>สรุปสถานะการจัดเบิกและวิเคราะห์รอบเวลาจัดของ (เป้าหมายจัดเสร็จภายใน {warehousePickingLeadTimeTarget} วัน)</span>
-                  </h4>
-                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 grid grid-cols-4 gap-3 text-xs">
-                    <div className="sm:border-r sm:border-slate-200 pr-3">
-                      <span className="px-2 py-0.5 rounded font-black text-[10px] bg-emerald-100 text-emerald-900 whitespace-nowrap">จัดเสร็จสิ้น (Completed)</span>
-                      <p className="text-sm font-black text-slate-800 mt-1">{completedWarehouseDocs.toLocaleString()} ใบ ({warehouseCompletionRate}%)</p>
-                      <p className="text-[10px] text-slate-500 mt-0.5">ปิดงานเบิกเรียบร้อย</p>
-                    </div>
-                    <div className="sm:border-r sm:border-slate-200 pr-3">
-                      <span className="px-2 py-0.5 rounded font-black text-[10px] bg-rose-100 text-rose-900 whitespace-nowrap">บิลล่าช้ากว่าเป้า {warehousePickingLeadTimeTarget} วัน</span>
-                      <p className="text-sm font-black text-rose-700 mt-1">{delayedWarehouseDocsCount.toLocaleString()} ใบ</p>
-                      <p className="text-[10px] text-slate-500 mt-0.5">เกินเป้าหมาย SLA {warehousePickingLeadTimeTarget} วัน</p>
-                    </div>
-                    <div className="sm:border-r sm:border-slate-200 pr-3">
-                      <span className="px-2 py-0.5 rounded font-black text-[10px] bg-sky-100 text-sky-900 whitespace-nowrap">Lead Time จัดของเฉลี่ย</span>
-                      <p className="text-sm font-black text-sky-800 mt-1">{avgLeadTimeDays} วัน / บิล</p>
-                      <p className="text-[10px] text-slate-500 mt-0.5">คำนวณจาก {warehouseLeadTimeRecords.length.toLocaleString()} บิล · เป้าหมาย ≤ {warehousePickingLeadTimeTarget} วัน</p>
-                    </div>
-                    <div>
-                      <span className="px-2 py-0.5 rounded font-black text-[10px] bg-blue-100 text-blue-900 whitespace-nowrap">ตรงตามแผน ≤ {warehousePickingLeadTimeTarget} วัน</span>
-                      <p className="text-sm font-black text-emerald-800 mt-1">{warehouseOnPlanPercent}%</p>
-                      <p className="text-[10px] text-slate-500 mt-0.5">{warehouseOnPlanCount.toLocaleString()} จาก {warehouseLeadTimeRecords.length.toLocaleString()} บิล</p>
-                    </div>
+
+                <div className="rounded-xl border border-slate-200 p-3 space-y-2 text-xs" data-pdf-section>
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="font-bold text-slate-700">Picking Lead Time · วันที่จัดเสร็จ - วันที่เปิดบิลขาย</p>
+                    <p className="text-slate-500">คำนวณได้ {warehouseLeadTimeStats.count.toLocaleString()} / {completedWarehouseDocs.toLocaleString()} บิลจัดเสร็จ · ไม่มีคู่วันที่ {warehouseLeadTimeUnavailableDocs.length.toLocaleString()} บิล</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-center border-t border-slate-100 pt-2">
+                    <p>MIN (ต่ำสุด) <strong>{warehouseLeadTimeStats.count ? warehouseLeadTimeStats.min : '-'} วัน</strong></p>
+                    <p>MAX (สูงสุด) <strong>{warehouseLeadTimeStats.count ? warehouseLeadTimeStats.max : '-'} วัน</strong></p>
                   </div>
                 </div>
               </div>

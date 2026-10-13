@@ -39,7 +39,7 @@ const bundle=await build({
     b.onLoad({filter:/.*/,namespace:'capture-xlsx'},()=>({contents:`
       export * from 'actual-xlsx';
       import { utils } from 'actual-xlsx';
-      export const writeFile = (book, name) => {window.__excelExports ||= []; window.__excelExports.push({name, rows:utils.sheet_to_json(book.Sheets[book.SheetNames[0]])});};
+      export const writeFile = (book, name) => {window.__excelExports ||= []; const sheets=book.SheetNames.map(sheetName=>({name:sheetName,rows:utils.sheet_to_json(book.Sheets[sheetName])})); window.__excelExports.push({name,sheets,rows:sheets.at(-1)?.rows || []});};
     `,loader:'js'}));
     b.onResolve({filter:/^jspdf$/},()=>({path:'jspdf',namespace:'capture-pdf'}));
     b.onResolve({filter:/^actual-jspdf$/},()=>({path:path.join(root,'node_modules/jspdf/dist/jspdf.es.min.js')}));

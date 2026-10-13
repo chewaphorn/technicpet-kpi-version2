@@ -9,7 +9,7 @@ import {
   parseDateFlexible,
   formatDateToBE
 } from './dataProcessor';
-import { warehouseField, warehouseDate, warehouseDays, warehouseReceivedAliases, warehouseDocDateAliases } from './warehouseDates';
+import { warehouseField, warehouseDate, warehouseDays, warehouseReceivedAliases, warehouseDocDateAliases, warehouseSalesOrderDateAliases } from './warehouseDates';
 
 /**
  * Returns empty/zeroed warehouse department analytics.
@@ -99,6 +99,7 @@ export function analyzeWarehouseData(
       const customer = String(findValue(row, ['ชื่อลูกค้า', 'ลูกค้า', 'customer', 'customer_name', 'client'], '')).trim();
       const startTime = String(findValue(row, ['เวลาเริ่ม', 'เวลาเริ่มจัด', 'startTime', 'start'], '')).trim();
       const receivedBookingDate = warehouseDate(warehouseField(row, warehouseReceivedAliases));
+      const salesOrderDate = warehouseDate(warehouseField(row, warehouseSalesOrderDateAliases));
       const receivedFromWarehouseDate = String(findValue(row, ['รับจากคลัง', 'วันที่รับจากคลัง', 'received_total_date', 'receivedFromWarehouseDate'], '')).trim();
       const plannedDate = String(findValue(row, ['วันที่วางแผน', 'วันวางแผน', 'plannedDate', 'plan_date'], '')).trim();
       const loadedDate = String(findValue(row, ['โหลดสินค้าจริง', 'วันที่โหลดสินค้าจริง', 'loadedDate', 'actual_load_date'], '')).trim();
@@ -148,11 +149,11 @@ export function analyzeWarehouseData(
       let delayDays: number = 0;
       let delayDate: string | undefined = undefined;
 
-      const parsedDocDate = parseDateFlexible(effectiveDocDate);
+      const parsedSalesOrderDate = parseDateFlexible(salesOrderDate);
 
-      // วันครบกำหนดเป้าหมาย (วันที่รับใบจอง + 3 วัน)
-      if (parsedDocDate) {
-        const targetD = new Date(parsedDocDate);
+      // วันครบกำหนดเป้าหมาย (วันที่เปิดบิลขาย + 3 วัน)
+      if (parsedSalesOrderDate) {
+        const targetD = new Date(parsedSalesOrderDate);
         targetD.setDate(targetD.getDate() + 3);
         delayDate = formatDateToBE(targetD);
       }
@@ -160,7 +161,7 @@ export function analyzeWarehouseData(
       if (status === 'completed' || status === 'verified') {
         if (rawCompletedDate) {
           completedDate = String(rawCompletedDate);
-          leadTimeDays = warehouseDays(effectiveDocDate, completedDate);
+          leadTimeDays = warehouseDays(salesOrderDate, completedDate);
         } else {
           completedDate = undefined;
           leadTimeDays = undefined;
@@ -171,11 +172,11 @@ export function analyzeWarehouseData(
         } else {
           delayDays = 0;
         }
-      } else if (status === 'pending' || status === 'picking') {
-        if (parsedDocDate) {
+      } else {
+        if (parsedSalesOrderDate) {
           const today = new Date();
           const refDate = today;
-          const diffMs = refDate.getTime() - parsedDocDate.getTime();
+          const diffMs = refDate.getTime() - parsedSalesOrderDate.getTime();
           pendingDays = Math.max(0, Math.round(diffMs / (1000 * 60 * 60 * 24)));
         } else {
           pendingDays = undefined;
@@ -212,6 +213,7 @@ export function analyzeWarehouseData(
         id: `wh-${idx + 1}`,
         docNo,
         customer,
+        salesOrderDate: salesOrderDate || undefined,
         date: effectiveDocDate,
         completedDate,
         receivedBookingDate,
@@ -280,6 +282,7 @@ export function analyzeWarehouseData(
       existing.statusLabel = finalStatusLabel;
       if (doc.completedDate && (!existing.completedDate || doc.completedDate > existing.completedDate)) existing.completedDate = doc.completedDate;
       if (doc.date && (!existing.date || doc.date < existing.date)) existing.date = doc.date;
+      if (doc.salesOrderDate && !existing.salesOrderDate) existing.salesOrderDate = doc.salesOrderDate;
       if (doc.receivedBookingDate && (!existing.receivedBookingDate || doc.receivedBookingDate < existing.receivedBookingDate)) existing.receivedBookingDate = doc.receivedBookingDate;
       existing.transferredToDelivery = Boolean(existing.transferredToDelivery || doc.transferredToDelivery);
       if (doc.transferTime && (!existing.transferTime || doc.transferTime > existing.transferTime)) existing.transferTime = doc.transferTime;
@@ -297,24 +300,21 @@ export function analyzeWarehouseData(
   // Recompute from the merged dates; never retain stale pending/delay values
   // from an earlier duplicate row once the booking has completed.
   for (const doc of calculatedWarehouseDocs) {
-    doc.leadTimeDays = warehouseDays(doc.receivedBookingDate || doc.date, doc.completedDate);
+    doc.leadTimeDays = warehouseDays(doc.salesOrderDate, doc.completedDate);
     if (doc.status === 'completed' || doc.status === 'verified') {
       doc.pendingDays = undefined;
       doc.delayDays = Math.max(0, (doc.leadTimeDays ?? 0) - 3);
-    } else if (doc.status === 'pending' || doc.status === 'picking') {
-      const elapsed = warehouseDays(doc.receivedBookingDate || doc.date, new Date());
+    } else {
+      const elapsed = warehouseDays(doc.salesOrderDate, new Date());
       doc.pendingDays = elapsed === undefined ? undefined : Math.max(0, elapsed);
       doc.delayDays = Math.max(0, (doc.pendingDays ?? 0) - 3);
-    } else {
-      doc.pendingDays = undefined;
-      doc.delayDays = 0;
     }
   }
   transferredToDeliveryCount = calculatedWarehouseDocs.filter(doc => doc.transferredToDelivery).length;
 
   const warehouseTotalDocs = calculatedWarehouseDocs.length;
   const warehouseCompleted = calculatedWarehouseDocs.filter(d => d.status === 'completed' || d.status === 'verified').length;
-  const warehousePendingCount = calculatedWarehouseDocs.filter(d => d.status === 'pending' || d.status === 'picking').length;
+  const warehousePendingCount = warehouseTotalDocs - warehouseCompleted;
   const avgItemsPerDoc = warehouseTotalDocs > 0 ? (totalPickedItems / warehouseTotalDocs).toFixed(1) : '0';
 
   const docsWithLeadTime = calculatedWarehouseDocs.filter(d => d.leadTimeDays !== undefined);

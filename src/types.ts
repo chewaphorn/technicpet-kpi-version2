@@ -47,8 +47,8 @@ export interface WarehouseDoc {
   receivedFromWarehouseDate?: string;
   plannedDate?: string;
   loadedDate?: string;
-  leadTimeDays?: number; // จำนวนวันที่ใช้จัดของ (วันที่จัดของเสร็จ - วันที่ใบจอง)
-  pendingDays?: number; // จำนวนวันที่ค้างจัด (นับจากวันที่รับใบจอง)
+  leadTimeDays?: number; // จำนวนวันที่ใช้จัดของ (วันที่จัดของเสร็จ - วันที่เปิดบิลขาย)
+  pendingDays?: number; // จำนวนวันที่ค้างจัด (ปัจจุบัน - วันที่เปิดบิลขาย)
   delayDays?: number; // จำนวนวันที่ล่าช้ากว่าเป้าหมาย 3 วัน (เกินกว่า 3 วัน)
   delayDate?: string; // วันที่เริ่มล่าช้า หรือ วันครบกำหนดเป้าหมาย
   startTime: string;

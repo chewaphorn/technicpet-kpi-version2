@@ -1,8 +1,9 @@
 import { useReportTargets } from '../hooks/useReportTargets';
-import { aggregateWarehouseDocs, filterWarehouseDocs, calculateWarehouseMetrics, getPickingLeadTimeDays } from '../utils/logisticsReportMetrics';
+import { aggregateWarehouseDocs, filterWarehouseDocs, calculateWarehouseMetrics, getPickingLeadTimeDays, isWarehouseDocCompleted } from '../utils/logisticsReportMetrics';
 import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { WarehouseDoc, DetailedSalesOrder, SalesOrderItem, AuthUser } from '../types';
+import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { 
   Inbox, 
   CheckCircle2, 
@@ -12,7 +13,6 @@ import {
   AlertTriangle,
   Eye,
   FileSpreadsheet,
-  Truck,
   ArrowRightCircle,
   CalendarDays,
   Clock,
@@ -23,6 +23,7 @@ import {
   Package,
   Boxes,
   ExternalLink,
+  ChevronDown,
   ChevronRight,
   Info,
   RefreshCw,
@@ -31,6 +32,11 @@ import {
   BarChart2
 } from 'lucide-react';
 import { getMinMaxDates } from '../utils/dateUtils';
+
+const formatWarehouseMonth = (month: string) => {
+  const [year, monthNumber] = month.split('-').map(Number);
+  return new Intl.DateTimeFormat('th-TH', { month: 'short', year: 'numeric' }).format(new Date(year, monthNumber - 1, 1));
+};
 
 interface WarehouseReportViewProps {
   docs: WarehouseDoc[];
@@ -82,6 +88,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [selectedDocForItems, setSelectedDocForItems] = useState<WarehouseDoc | null>(null);
+  const [expandedLeadTimeDetails, setExpandedLeadTimeDetails] = useState<'unavailable' | 'maximum' | null>(null);
   const [pageSize, setPageSize] = useState<10 | 25 | 50>(10);
   const [currentPage, setCurrentPage] = useState(1);
   const { warehousePickingLeadTimeTarget: pickingLeadTimeTarget } = useReportTargets();
@@ -106,6 +113,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
   const aggregatedDocs = useMemo(() => aggregateWarehouseDocs(docs, detailedOrders), [docs, detailedOrders]);
 
   const filteredDocs = useMemo(() => filterWarehouseDocs(aggregatedDocs, {fromDate, toDate, search: searchQuery, status: statusFilter}, pickingLeadTimeTarget), [aggregatedDocs, fromDate, toDate, searchQuery, statusFilter, pickingLeadTimeTarget]);
+  const hasActiveFilters = fromDate !== datasetDateRange.min || toDate !== datasetDateRange.max || Boolean(searchQuery.trim()) || statusFilter !== 'all';
 
   // Keep pagination consistent with the Delivery Lead Time report.
   useEffect(() => {
@@ -124,7 +132,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
     }
   }, [currentPage, totalPages]);
 
-  const {totalDocsCount, completedDocsCount, completionPercent, pendingDocsCount, delayedDocsCount, isDocDelayed, leadTimeRecords, docsWithLeadTime, leadTimeStats, avgLeadTimeDays, onPlanLeadTimeCount, onPlanLeadTimePercent, dailyInboundBookings, dailyPickedOrders, transferredCount, transferredPct} = useMemo(() => calculateWarehouseMetrics(filteredDocs, pickingLeadTimeTarget), [filteredDocs, pickingLeadTimeTarget]);
+  const {totalDocsCount, completedDocsCount, completionPercent, pendingDocsCount, delayedDocsCount, isDocDelayed, leadTimeUnavailableDocs, maximumLeadTimeRecords, leadTimeStats, avgLeadTimeDays, dailySummaries, monthlySummaries} = useMemo(() => calculateWarehouseMetrics(filteredDocs, pickingLeadTimeTarget), [filteredDocs, pickingLeadTimeTarget]);
 
   // Helper to retrieve detailed items for a doc
   const getDocItems = (doc: WarehouseDoc): SalesOrderItem[] => {
@@ -183,7 +191,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
   const handleExportExcel = () => {
     try {
       const exportRows = filteredDocs.map((doc, index) => {
-        const isCompleted = doc.status === 'completed' || doc.status === 'verified';
+        const isCompleted = isWarehouseDocCompleted(doc);
         const isDelayed = isDocDelayed(doc);
         const statusLabel = isDelayed
           ? `จัดช้าเกิน SLA (+${Math.max(0, (getPickingLeadTimeDays(doc) ?? doc.pendingDays ?? 0) - pickingLeadTimeTarget)} วัน)`
@@ -224,6 +232,33 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
       ];
 
       const workbook = XLSX.utils.book_new();
+      const summaryWorksheet = XLSX.utils.json_to_sheet([
+        { รายการ: 'ช่วงวันที่รายงาน', ค่า: `${fromDate || 'ไม่จำกัด'} ถึง ${toDate || 'ไม่จำกัด'}` },
+        { รายการ: 'จำนวนรับเข้าใบจองทั้งหมด', ค่า: totalDocsCount },
+        { รายการ: 'จำนวนที่จัดได้ทั้งหมด', ค่า: completedDocsCount },
+        { รายการ: 'จำนวนบิลที่ค้างจัดทั้งหมด', ค่า: pendingDocsCount },
+        { รายการ: 'Lead Time ต่ำสุด (วัน)', ค่า: leadTimeStats.count ? leadTimeStats.min : '-' },
+        { รายการ: 'Lead Time สูงสุด (วัน)', ค่า: leadTimeStats.count ? leadTimeStats.max : '-' },
+        { รายการ: 'บิลที่มีคู่วันที่คำนวณ Lead Time ได้', ค่า: `${leadTimeStats.count} / ${completedDocsCount}` },
+        { รายการ: 'บิลจัดเสร็จที่ไม่มีคู่วันที่', ค่า: leadTimeUnavailableDocs.length },
+      ]);
+      summaryWorksheet['!cols'] = [{ wch: 38 }, { wch: 32 }];
+      const dailyWorksheet = XLSX.utils.json_to_sheet(dailySummaries.map((day) => ({
+        'วันที่รับใบจอง': day.date,
+        'รับเข้าใบจอง': day.inboundBookings,
+        'จัดเสร็จ': day.pickedOrders,
+        'ค้างจัด': day.pendingCount,
+      })));
+      const monthlyWorksheet = XLSX.utils.json_to_sheet(monthlySummaries.map((month) => ({
+        'เดือนรับใบจอง': formatWarehouseMonth(month.month),
+        'รับเข้าใบจอง': month.inboundBookings,
+        'จัดเสร็จ': month.pickedOrders,
+        'ค้างจัด': month.pendingCount,
+        'อัตราจัดสำเร็จ (%)': month.completionRate,
+      })));
+      XLSX.utils.book_append_sheet(workbook, summaryWorksheet, 'สรุป KPI');
+      XLSX.utils.book_append_sheet(workbook, dailyWorksheet, 'สรุปรายวัน');
+      XLSX.utils.book_append_sheet(workbook, monthlyWorksheet, 'สรุปรายเดือน');
       XLSX.utils.book_append_sheet(workbook, worksheet, 'สถานะการจัดสินค้า');
       const dateRangeSuffix = `${fromDate || 'ทั้งหมด'}_ถึง_${toDate || 'ทั้งหมด'}`;
       XLSX.writeFile(workbook, `TechnicPet_รายงานสถานะใบสั่งจัดสินค้า_${dateRangeSuffix}.xlsx`);
@@ -340,7 +375,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
               <span>กรองข้อมูล</span>
             </button>
 
-            {(fromDate !== datasetDateRange.min || toDate !== datasetDateRange.max || searchQuery || statusFilter !== 'all') && (
+            {hasActiveFilters && (
               <button
                 type="button"
                 id="btn-warehouse-filter-reset"
@@ -357,83 +392,196 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
       </div>
 
       {/* Core warehouse metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
         <div className="bg-white p-6 rounded-xl border-2 border-blue-200/80 shadow-xs flex flex-col justify-between relative overflow-hidden">
           <div className="flex items-start justify-between">
             <div>
-              <h4 className="text-sm font-bold text-slate-700">จำนวนรับเข้าใบจอง / วัน</h4>
-              <p className="text-xs text-slate-500 mt-0.5">Daily Inbound Bookings</p>
+              <h4 className="text-sm font-bold text-slate-700">จำนวนรับเข้าใบจองทั้งหมด</h4>
+              <p className="text-xs text-slate-500 mt-0.5">Total Inbound Bookings</p>
             </div>
             <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs"><Inbox className="w-5 h-5" /></div>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-baseline justify-between">
-            <div><span className="text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight tabular-nums">{dailyInboundBookings.toLocaleString()}</span><span className="text-sm font-bold text-slate-600 ml-1.5">ใบ / วัน</span></div>
-            <div className="text-right"><span className="text-xs font-semibold text-slate-500">สะสมทั้งหมด</span><p className="text-xs font-bold text-blue-700 tabular-nums">{totalDocsCount.toLocaleString()} ใบ</p></div>
+            <div><span className="text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight tabular-nums">{totalDocsCount.toLocaleString()}</span><span className="text-sm font-bold text-slate-600 ml-1.5">ใบ</span></div>
+            <div className="text-right"><span className="text-xs font-semibold text-slate-500">ตามตัวกรองปัจจุบัน</span></div>
           </div>
         </div>
 
         <div className="bg-white p-6 rounded-xl border-2 border-emerald-200/80 shadow-xs flex flex-col justify-between relative overflow-hidden">
           <div className="flex items-start justify-between">
             <div>
-              <h4 className="text-sm font-bold text-slate-700">จำนวนที่จัดของได้ / วัน</h4>
-              <p className="text-xs text-slate-500 mt-0.5">Daily Picked &amp; Completed</p>
+              <h4 className="text-sm font-bold text-slate-700">จำนวนที่จัดได้ทั้งหมด</h4>
+              <p className="text-xs text-slate-500 mt-0.5">Total Picked &amp; Completed</p>
             </div>
             <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs"><CheckCircle2 className="w-5 h-5" /></div>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-baseline justify-between">
-            <div><span className="text-3xl sm:text-4xl font-bold text-emerald-600 tracking-tight tabular-nums">{dailyPickedOrders.toLocaleString()}</span><span className="text-sm font-bold text-slate-600 ml-1.5">ใบ / วัน</span></div>
+            <div><span className="text-3xl sm:text-4xl font-bold text-emerald-600 tracking-tight tabular-nums">{completedDocsCount.toLocaleString()}</span><span className="text-sm font-bold text-slate-600 ml-1.5">ใบ</span></div>
             <div className="text-right"><span className="text-xs font-semibold text-slate-500">อัตราจัดสำเร็จ</span><p className="text-xs font-bold text-emerald-700 tabular-nums">{completionPercent}% ({completedDocsCount.toLocaleString()} ใบ)</p></div>
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-xl border-2 border-indigo-200/80 shadow-xs flex flex-col justify-between relative overflow-hidden">
+        <div className="bg-white p-6 rounded-xl border-2 border-amber-200/80 shadow-xs flex flex-col justify-between relative overflow-hidden">
           <div className="flex items-start justify-between">
             <div>
-              <h4 className="text-sm font-bold text-slate-700">จำนวนที่ส่งต่อฝ่ายขนส่ง</h4>
-              <p className="text-xs text-slate-500 mt-0.5">Transferred to Delivery</p>
+              <h4 className="text-sm font-bold text-slate-700">เลขที่บิลที่ค้างจัดทั้งหมด</h4>
+              <p className="text-xs text-slate-500 mt-0.5">รับเข้าทั้งหมด - จัดเสร็จทั้งหมด</p>
             </div>
-            <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs"><Truck className="w-5 h-5" /></div>
+            <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-xs"><Hourglass className="w-5 h-5" /></div>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-baseline justify-between">
-            <div><span className="text-3xl sm:text-4xl font-bold text-indigo-600 tracking-tight tabular-nums">{transferredCount.toLocaleString()}</span><span className="text-sm font-bold text-slate-600 ml-1.5">ใบ</span></div>
-            <div className="text-right"><span className="text-xs font-semibold text-slate-500">ส่งต่อสำเร็จ</span><p className="text-xs font-bold text-indigo-700 tabular-nums">{transferredPct}% ของที่จัดเสร็จ</p></div>
+            <div><span className="text-3xl sm:text-4xl font-bold text-amber-600 tracking-tight tabular-nums">{pendingDocsCount.toLocaleString()}</span><span className="text-sm font-bold text-slate-600 ml-1.5">ใบ</span></div>
+            <button onClick={() => setStatusFilter(statusFilter === 'pending_all' ? 'all' : 'pending_all')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${statusFilter === 'pending_all' ? 'bg-amber-600 text-white border-amber-600 shadow-xs' : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'}`}><span>{statusFilter === 'pending_all' ? 'แสดงทั้งหมด' : 'ดูเฉพาะบิลค้าง'}</span><ArrowRightCircle className="w-3.5 h-3.5" /></button>
           </div>
         </div>
       </div>
 
-      {/* Pending and average lead-time reports */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <div className="bg-white p-6 rounded-xl border border-amber-200 shadow-xs flex flex-col justify-between">
-          <div className="flex items-start justify-between">
-            <div><span className="text-xs font-bold text-slate-500">นับจากวันที่รับใบจอง</span><h3 className="text-base font-bold text-slate-900">เลขที่บิลที่ค้างจัดของ (Pending Picking Orders)</h3><p className="text-xs text-slate-500 leading-relaxed">บิลที่ยังไม่ได้จัดหรืออยู่ระหว่างจัด นับจำนวนวันค้างจากวันที่รับใบจอง</p></div>
-            <div className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-xs shrink-0"><Hourglass className="w-5 h-5" /></div>
+      {hasActiveFilters && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-slate-100">
+            <h3 className="text-sm font-bold text-slate-800">สรุปข้อมูลรายวันตามวันที่รับใบจอง</h3>
+            <p className="text-xs text-slate-500 mt-0.5">แสดงจำนวนรับเข้า จัดเสร็จ และค้างจัดของข้อมูลที่ผ่านตัวกรอง</p>
           </div>
-          <div className="mt-5 pt-4 border-t border-slate-100 flex items-end justify-between">
-            <div><div className="flex items-baseline gap-2"><span className="text-3xl sm:text-4xl font-black text-amber-600 tracking-tight">{pendingDocsCount.toLocaleString()}</span><span className="text-sm font-bold text-slate-600">เลขที่บิลค้าง</span></div><p className="text-xs text-slate-500 mt-1">{pendingDocsCount > 0 ? 'ต้องติดตามเร่งรัดเพื่อไม่ให้กระทบ SLA' : 'ไม่มีรายการบิลค้างจัดในขณะนี้'}</p></div>
-            <button onClick={() => setStatusFilter(statusFilter === 'pending_all' ? 'all' : 'pending_all')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${statusFilter === 'pending_all' ? 'bg-amber-600 text-white border-amber-600 shadow-xs' : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'}`}><span>{statusFilter === 'pending_all' ? 'แสดงทั้งหมด' : 'ดูเฉพาะบิลค้าง'}</span><ArrowRightCircle className="w-3.5 h-3.5" /></button>
+          <div className="max-h-72 overflow-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="sticky top-0 bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                <tr>
+                  <th className="py-2.5 px-4">วันที่รับใบจอง</th>
+                  <th className="py-2.5 px-4 text-right">รับเข้า</th>
+                  <th className="py-2.5 px-4 text-right">จัดเสร็จ</th>
+                  <th className="py-2.5 px-4 text-right">ค้างจัด</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {dailySummaries.length === 0 ? (
+                  <tr><td colSpan={4} className="py-6 text-center text-slate-400">ไม่พบข้อมูลรายวันตามตัวกรอง</td></tr>
+                ) : dailySummaries.map((day) => (
+                  <tr key={day.date} className="hover:bg-slate-50/70">
+                    <td className="py-2.5 px-4 font-mono font-semibold text-slate-700">{day.date}</td>
+                    <td className="py-2.5 px-4 text-right tabular-nums">{day.inboundBookings.toLocaleString()}</td>
+                    <td className="py-2.5 px-4 text-right tabular-nums text-emerald-700">{day.pickedOrders.toLocaleString()}</td>
+                    <td className="py-2.5 px-4 text-right tabular-nums text-amber-700">{day.pendingCount.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
+      )}
 
-        <div className="bg-white p-6 rounded-xl border border-sky-200 shadow-xs flex flex-col justify-between">
-          <div className="flex items-start justify-between"><div><span className="text-xs font-bold text-slate-500">วันที่จัดเสร็จ - วันที่ใบจอง</span><h3 className="text-base font-bold text-slate-900">ระยะเวลาจัดของ (Picking Lead Time)</h3><p className="text-xs text-slate-500 leading-relaxed">คำนวณจำนวนวันที่ใช้จัดของในแต่ละเลขที่บิล</p></div><div className="w-11 h-11 rounded-xl bg-sky-600 text-white flex items-center justify-center shadow-xs shrink-0"><Clock className="w-5 h-5" /></div></div>
-          <div className="mt-5 pt-4 border-t border-slate-100 flex items-end justify-between"><div><div className="flex items-baseline gap-2"><span className="text-3xl sm:text-4xl font-black text-sky-700 tracking-tight">{avgLeadTimeDays}</span><span className="text-sm font-bold text-slate-600">วันเฉลี่ย / บิล</span></div><p className="text-xs text-slate-500 mt-1">เป้าหมาย SLA ไม่เกิน {pickingLeadTimeTarget} วันทำการ</p></div><div className="text-right"><span className="text-xs font-semibold text-slate-500">ตรงตามแผน ≤ {pickingLeadTimeTarget} วัน</span><p className="text-xs font-bold text-emerald-600 tabular-nums">{onPlanLeadTimeCount.toLocaleString()} จาก {leadTimeRecords.length.toLocaleString()} บิล ({onPlanLeadTimePercent}%)</p></div></div>
+      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100">
+          <h3 className="text-sm font-bold text-slate-800">แนวโน้ม KPI คลังสินค้ารายเดือน</h3>
+          <p className="text-xs text-slate-500 mt-0.5">แท่งแสดงรับเข้า จัดเสร็จ และค้างจัด · เส้นแสดงอัตราจัดสำเร็จรายเดือน</p>
+        </div>
+        <div className="h-80 p-4">
+          {monthlySummaries.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-xs font-medium text-slate-400">ไม่มีข้อมูลตามตัวกรอง</div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={monthlySummaries} margin={{ top: 8, right: 8, left: -16, bottom: 4 }} barGap={4}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="month" tickFormatter={formatWarehouseMonth} tickLine={false} axisLine={{ stroke: '#cbd5e1' }} tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }} />
+                <YAxis yAxisId="counts" allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: '#64748b', fontSize: 11 }} />
+                <YAxis yAxisId="rate" orientation="right" domain={[0, 100]} tickFormatter={(value) => `${Number(value)}%`} tickLine={false} axisLine={false} tick={{ fill: '#0f766e', fontSize: 11 }} />
+                <Tooltip labelFormatter={(month) => formatWarehouseMonth(String(month))} formatter={(value, name) => [name === 'อัตราจัดสำเร็จ' ? `${Number(value).toFixed(1)}%` : Number(value).toLocaleString(), name]} contentStyle={{ borderRadius: 10, borderColor: '#cbd5e1', fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
+                <Bar yAxisId="counts" dataKey="inboundBookings" name="รับเข้าใบจอง" fill="#2563eb" radius={[3, 3, 0, 0]} />
+                <Bar yAxisId="counts" dataKey="pickedOrders" name="จัดเสร็จ" fill="#059669" radius={[3, 3, 0, 0]} />
+                <Bar yAxisId="counts" dataKey="pendingCount" name="ค้างจัด" fill="#d97706" radius={[3, 3, 0, 0]} />
+                <Line yAxisId="rate" type="monotone" dataKey="completionRate" name="อัตราจัดสำเร็จ" stroke="#0f766e" strokeWidth={2.5} dot={{ r: 3, fill: '#fff', stroke: '#0f766e', strokeWidth: 2 }} activeDot={{ r: 5 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 
       {/* Picking Lead Time statistics */}
       <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/90 shadow-2xs">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3.5 border-b border-slate-100">
-          <div><div className="flex items-center gap-2"><div className="w-6 h-6 rounded-lg bg-indigo-50 text-indigo-700 flex items-center justify-center shrink-0 border border-indigo-100"><BarChart2 className="w-3.5 h-3.5" /></div><h3 className="text-xs sm:text-sm font-bold text-slate-900">ระยะเวลาจัดสินค้าของแต่ละเลขที่บิล (Picking Lead Time: Max, Mean, Min)</h3><span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200">คำนวณจาก {leadTimeStats.count.toLocaleString()} บิล</span></div><p className="text-xs text-slate-500 mt-1">คำนวณจากวันที่รับใบจองถึงวันที่จัดเสร็จจริง</p></div>
-          <div className="flex items-center gap-2 sm:gap-3 flex-wrap lg:justify-end">
-            <div className="flex-1 sm:flex-initial min-w-[90px] bg-emerald-50/70 border border-emerald-100 rounded-xl px-3 py-2 text-center"><span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block">MIN (เร็วสุด)</span><div className="flex items-baseline justify-center gap-1 mt-0.5"><span className="text-lg sm:text-xl font-black text-emerald-700 font-mono">{leadTimeStats.min}</span><span className="text-[11px] font-semibold text-emerald-800">วัน</span></div></div>
-            <div className="flex-1 sm:flex-initial min-w-[105px] bg-blue-50/80 border border-blue-200/80 rounded-xl px-3.5 py-2 text-center shadow-2xs"><span className="text-[10px] font-bold text-blue-900 uppercase tracking-wider block">MEAN (เฉลี่ย)</span><div className="flex items-baseline justify-center gap-1 mt-0.5"><span className="text-xl sm:text-2xl font-black text-blue-900 font-mono">{leadTimeStats.mean}</span><span className="text-xs font-bold text-blue-800">วัน</span></div></div>
-            <div className="flex-1 sm:flex-initial min-w-[90px] bg-rose-50/70 border border-rose-100 rounded-xl px-3 py-2 text-center"><span className="text-[10px] font-bold text-rose-800 uppercase tracking-wider block">MAX (นานสุด)</span><div className="flex items-baseline justify-center gap-1 mt-0.5"><span className="text-lg sm:text-xl font-black text-rose-700 font-mono">{leadTimeStats.max}</span><span className="text-[11px] font-semibold text-rose-800">วัน</span></div></div>
-            <div className="min-w-[145px] text-right"><span className="text-xs font-semibold text-slate-500 block">เกณฑ์ SLA: ไม่เกิน {pickingLeadTimeTarget} วันทำการ</span><span className="text-xs font-bold text-emerald-600 tabular-nums">ตรงตามแผน {onPlanLeadTimeCount.toLocaleString()} / {leadTimeRecords.length.toLocaleString()} บิล ({onPlanLeadTimePercent}%)</span></div>
+        <div className="pb-3.5 border-b border-slate-100">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="w-6 h-6 rounded-lg bg-indigo-50 text-indigo-700 flex items-center justify-center shrink-0 border border-indigo-100"><BarChart2 className="w-3.5 h-3.5" /></div>
+            <h3 className="text-xs sm:text-sm font-bold text-slate-900">Picking Lead Time</h3>
+            <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200">คำนวณได้ {leadTimeStats.count.toLocaleString()} / {completedDocsCount.toLocaleString()} บิลจัดเสร็จ</span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="text-xs text-slate-500">วันที่จัดเสร็จ - วันที่เปิดบิลขาย ในช่วงวันที่ที่เลือก · อีก {leadTimeUnavailableDocs.length.toLocaleString()} บิลไม่มีคู่วันที่ที่ใช้คำนวณได้</p>
+            {leadTimeUnavailableDocs.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setExpandedLeadTimeDetails(expandedLeadTimeDetails === 'unavailable' ? null : 'unavailable')}
+                aria-expanded={expandedLeadTimeDetails === 'unavailable'}
+                className="inline-flex items-center gap-1 text-xs font-bold text-blue-700 hover:text-blue-900 cursor-pointer"
+              >
+                {expandedLeadTimeDetails === 'unavailable' ? 'ซ่อนรายการ' : `ดูรายการ ${leadTimeUnavailableDocs.length} บิล`}
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${expandedLeadTimeDetails === 'unavailable' ? 'rotate-180' : ''}`} />
+              </button>
+            )}
           </div>
         </div>
-        <div className="pt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
-          {leadTimeStats.distribution.map((item, index) => { const barColors = ['bg-emerald-500', 'bg-blue-500', 'bg-indigo-500', 'bg-amber-500']; const lightBgs = ['bg-emerald-50/60 border-emerald-100', 'bg-blue-50/60 border-blue-100', 'bg-indigo-50/60 border-indigo-100', 'bg-amber-50/60 border-amber-100']; return <div key={item.range} className={`p-3 rounded-xl border ${lightBgs[index % lightBgs.length]} flex flex-col justify-between`}><div className="flex items-center justify-between text-xs mb-1.5"><span className="font-semibold text-slate-700">{item.range}</span><span className="font-mono font-bold text-slate-900">{item.count.toLocaleString()} บิล</span></div><div className="w-full bg-slate-200/80 rounded-full h-2 overflow-hidden my-1"><div className={`h-full rounded-full transition-all duration-500 ${barColors[index % barColors.length]}`} style={{ width: `${Math.max(item.percentage, item.count > 0 ? 4 : 0)}%` }} /></div><div className="flex items-center justify-between text-[11px] text-slate-500 mt-1"><span>สัดส่วน</span><span className="font-bold text-slate-700">{item.percentage}%</span></div></div>; })}
+        <div className="pt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="bg-emerald-50/70 border border-emerald-100 rounded-xl px-4 py-3 text-center"><span className="text-[10px] font-bold text-emerald-800 uppercase block">ค่าต่ำสุด (MIN)</span><div className="flex items-baseline justify-center gap-1 mt-1"><span className="text-xl font-black text-emerald-700 font-mono">{leadTimeStats.min}</span><span className="text-xs font-semibold text-emerald-800">วัน</span></div></div>
+          <button
+            type="button"
+            onClick={() => setExpandedLeadTimeDetails(expandedLeadTimeDetails === 'maximum' ? null : 'maximum')}
+            disabled={maximumLeadTimeRecords.length === 0}
+            aria-expanded={expandedLeadTimeDetails === 'maximum'}
+            className="bg-rose-50/70 border border-rose-100 rounded-xl px-4 py-3 text-center hover:bg-rose-100/70 focus:outline-none focus:ring-2 focus:ring-rose-400/40 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+            title="คลิกเพื่อดูบิลที่ใช้เวลาจัดนานที่สุด"
+          >
+            <span className="text-[10px] font-bold text-rose-800 uppercase block">ค่าสูงสุด (MAX)</span>
+            <span className="flex items-baseline justify-center gap-1 mt-1"><span className="text-xl font-black text-rose-700 font-mono">{leadTimeStats.max}</span><span className="text-xs font-semibold text-rose-800">วัน</span></span>
+            <span className="text-[10px] font-semibold text-rose-700">ดู {maximumLeadTimeRecords.length} บิลที่ค่าสูงสุด</span>
+          </button>
         </div>
+
+        {expandedLeadTimeDetails && (
+          <div className="mt-4 border border-slate-200 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-3">
+              <h4 className="text-xs font-bold text-slate-800">
+                {expandedLeadTimeDetails === 'unavailable'
+                  ? `บิลจัดเสร็จที่ไม่มีคู่วันที่ (${leadTimeUnavailableDocs.length} บิล)`
+                  : `บิลที่มี Picking Lead Time สูงสุด (${maximumLeadTimeRecords.length} บิล)`}
+              </h4>
+              <button type="button" onClick={() => setExpandedLeadTimeDetails(null)} className="p-1 rounded-md text-slate-500 hover:bg-slate-200 cursor-pointer" aria-label="ปิดรายการ">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="max-h-72 overflow-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 bg-white text-slate-600 font-bold border-b border-slate-200">
+                  <tr>
+                    <th className="py-2.5 px-4">เลขที่ใบจอง</th>
+                    <th className="py-2.5 px-4">วันที่เปิดบิลขาย</th>
+                    <th className="py-2.5 px-4">วันที่จัดเสร็จ</th>
+                    {expandedLeadTimeDetails === 'unavailable'
+                      ? <th className="py-2.5 px-4">สาเหตุ</th>
+                      : <th className="py-2.5 px-4 text-right">Lead Time</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {expandedLeadTimeDetails === 'unavailable'
+                    ? leadTimeUnavailableDocs.map(({ doc, reason }) => (
+                      <tr key={doc.id || doc.docNo} className="hover:bg-slate-50/70">
+                        <td className="py-2.5 px-4 font-mono font-semibold text-slate-800">{doc.docNo}</td>
+                        <td className="py-2.5 px-4">{doc.salesOrderDate || '-'}</td>
+                        <td className="py-2.5 px-4">{doc.completedDate || '-'}</td>
+                        <td className="py-2.5 px-4 text-amber-700">{reason}</td>
+                      </tr>
+                    ))
+                    : maximumLeadTimeRecords.map(({ doc, days }) => (
+                      <tr key={doc.id || doc.docNo} className="hover:bg-slate-50/70">
+                        <td className="py-2.5 px-4 font-mono font-semibold text-slate-800">{doc.docNo}</td>
+                        <td className="py-2.5 px-4">{doc.salesOrderDate || '-'}</td>
+                        <td className="py-2.5 px-4">{doc.completedDate || '-'}</td>
+                        <td className="py-2.5 px-4 text-right font-bold text-rose-700">{days} วัน</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
       {/* Main Table: รายงานสถานะใบสั่งจัดสินค้า */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
@@ -507,14 +655,14 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
                     <Hourglass className="w-3 h-3 text-amber-600" />
                     <span>จำนวนวันค้างจัดของ</span>
                   </div>
-                  <span className="text-[9px] font-normal normal-case block text-amber-700/80">ปัจจุบัน - วันที่รับใบจอง</span>
+                  <span className="text-[9px] font-normal normal-case block text-amber-700/80">ปัจจุบัน - วันที่เปิดบิลขาย</span>
                 </th>
                 <th className="py-3.5 px-4 text-center bg-sky-50/80 text-sky-900 border-r border-sky-200/70 whitespace-nowrap">
                   <div className="flex items-center justify-center gap-1">
                     <Clock className="w-3 h-3 text-sky-600" />
                     <span>Lead Time (วัน)</span>
                   </div>
-                  <span className="text-[9px] font-normal normal-case block text-sky-700/80">เริ่มจากวันที่รับใบจอง</span>
+                  <span className="text-[9px] font-normal normal-case block text-sky-700/80">เริ่มจากวันที่เปิดบิลขาย</span>
                 </th>
                 <th className="py-3.5 px-4 text-center whitespace-nowrap">
                   <div className="flex items-center justify-center gap-1">
@@ -551,8 +699,8 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
                 </tr>
               ) : (
                 paginatedDocs.map((doc, docIdx) => {
-                  const isCompleted = doc.status === 'completed' || doc.status === 'verified';
-                  const isPending = doc.status === 'pending' || doc.status === 'picking';
+                  const isCompleted = isWarehouseDocCompleted(doc);
+                  const isPending = !isCompleted;
                   const isDelayed = isDocDelayed(doc);
                   const isOverTargetPending = isPending && (doc.pendingDays || 0) > pickingLeadTimeTarget;
                   const leadTimeDays = getPickingLeadTimeDays(doc);

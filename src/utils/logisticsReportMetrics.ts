@@ -7,13 +7,13 @@ import { warehouseDays, warehouseDate } from './warehouseDates';
 export interface ReportRowFilters { fromDate?: string; toDate?: string; search?: string; status?: string; vehicle?: string; }
 
 /**
- * Calculate calendar-day picking lead time from the source dates.
+ * Calculate calendar-day picking lead time from the sales opening date.
  * This is deliberately date-pair based so the KPI cannot silently use a
- * previously stored value when either the booking or completion date is absent.
+ * previously stored value when either the sales opening or completion date is absent.
  */
 export const calculatePickingLeadTimeDays = (doc: WarehouseDoc): number | undefined => {
   const calculated = warehouseDays(
-    doc.receivedBookingDate || doc.date,
+    doc.salesOrderDate,
     doc.completedDate
   );
   if (calculated !== undefined && calculated >= 0) return calculated;
@@ -25,8 +25,14 @@ export const getPickingLeadTimeDays = (doc: WarehouseDoc): number | undefined =>
   return calculatePickingLeadTimeDays(doc);
 };
 
+export const isWarehouseDocCompleted = (doc: WarehouseDoc): boolean =>
+  doc.status === 'completed' || doc.status === 'verified' || Boolean(warehouseDate(doc.completedDate));
 
-export function aggregateWarehouseDocs(docs: WarehouseDoc[], detailedOrders: DetailedSalesOrder[] = []) {
+
+export function aggregateWarehouseDocs(
+  docs: WarehouseDoc[],
+  detailedOrders: DetailedSalesOrder[] = [],
+) {
     const map = new Map<string, WarehouseDoc>();
     const salesOrdersByDocNo = new Map(
       detailedOrders.map((order) => [order.docNo.trim().toUpperCase(), order])
@@ -37,6 +43,9 @@ export function aggregateWarehouseDocs(docs: WarehouseDoc[], detailedOrders: Det
       const matchedSalesOrder = salesOrdersByDocNo.get(key);
       const salesItems = matchedSalesOrder?.items || [];
       const salesItemsCount = matchedSalesOrder?.totalItemsCount || salesItems.length;
+      const normalizedStatus = warehouseDate(doc.completedDate) && doc.status !== 'verified'
+        ? 'completed'
+        : doc.status;
       if (!map.has(key)) {
         // ใช้ข้อมูลฝ่ายขายเป็นแหล่งหลักเมื่อเลขที่ใบจองตรงกัน
         const initialItems = salesItems.length > 0
@@ -45,8 +54,10 @@ export function aggregateWarehouseDocs(docs: WarehouseDoc[], detailedOrders: Det
 
         map.set(key, {
           ...doc,
+          status: normalizedStatus,
+          statusLabel: normalizedStatus === 'completed' ? 'จัดเสร็จแล้ว' : doc.statusLabel,
           customer: matchedSalesOrder?.customer?.trim() || doc.customer,
-          salesOrderDate: matchedSalesOrder?.date || doc.salesOrderDate,
+          salesOrderDate: doc.salesOrderDate,
           items: initialItems,
           itemsCount: salesItemsCount || initialItems.length || doc.itemsCount,
         });
@@ -65,7 +76,7 @@ export function aggregateWarehouseDocs(docs: WarehouseDoc[], detailedOrders: Det
           }
         }
 
-        const isDone = existing.status === 'completed' || doc.status === 'completed' || existing.status === 'verified' || doc.status === 'verified';
+        const isDone = isWarehouseDocCompleted(existing) || isWarehouseDocCompleted(doc);
         const finalStatus = isDone
           ? 'completed'
           : existing.status === 'picking' || doc.status === 'picking'
@@ -91,6 +102,7 @@ export function aggregateWarehouseDocs(docs: WarehouseDoc[], detailedOrders: Det
           transferredToDelivery: Boolean(existing.transferredToDelivery || doc.transferredToDelivery),
           leadTimeDays: existing.leadTimeDays !== undefined ? existing.leadTimeDays : doc.leadTimeDays,
           pendingDays: existing.pendingDays !== undefined ? existing.pendingDays : doc.pendingDays,
+          salesOrderDate: existing.salesOrderDate || doc.salesOrderDate,
           customer: matchedSalesOrder?.customer?.trim() || existing.customer || doc.customer,
           items: salesItemsForRow,
           itemsCount: salesItemsCount || salesItemsForRow.length || (existing.itemsCount + doc.itemsCount),
@@ -117,14 +129,14 @@ export function filterWarehouseDocs(aggregatedDocs: WarehouseDoc[], {fromDate = 
       
       let matchesStatus = true;
       if (statusFilter === 'completed') {
-        matchesStatus = doc.status === 'completed' || doc.status === 'verified';
+        matchesStatus = isWarehouseDocCompleted(doc);
       } else if (statusFilter === 'delayed') {
         const leadTimeDays = getPickingLeadTimeDays(doc);
         matchesStatus = leadTimeDays !== undefined
           ? leadTimeDays > pickingLeadTimeTarget
           : (doc.delayDays || 0) > 0 || (doc.pendingDays || 0) > pickingLeadTimeTarget;
       } else if (statusFilter === 'pending_all') {
-        matchesStatus = doc.status === 'pending' || doc.status === 'picking';
+        matchesStatus = !isWarehouseDocCompleted(doc);
       } else if (statusFilter !== 'all') {
         matchesStatus = doc.status === statusFilter;
       }
@@ -135,11 +147,11 @@ export function filterWarehouseDocs(aggregatedDocs: WarehouseDoc[], {fromDate = 
 }
 export function calculateWarehouseMetrics(filteredDocs: WarehouseDoc[], pickingLeadTimeTarget = 3) {
   const totalDocsCount = filteredDocs.length;
-  const completedDocsCount = filteredDocs.filter(d => d.status === 'completed' || d.status === 'verified').length;
+  const completedDocsCount = filteredDocs.filter(isWarehouseDocCompleted).length;
   const completionPercent = totalDocsCount > 0 ? ((completedDocsCount / totalDocsCount) * 100).toFixed(1) : '0';
 
   // Pending docs count (บิลที่ค้างจัด)
-  const pendingDocsCount = filteredDocs.filter(d => d.status === 'pending' || d.status === 'picking').length;
+  const pendingDocsCount = totalDocsCount - completedDocsCount;
 
   // Delayed docs count (บิลที่ล่าช้ากว่าเป้าหมาย Picking Lead Time)
   const isDocDelayed = (doc: WarehouseDoc) => {
@@ -150,17 +162,32 @@ export function calculateWarehouseMetrics(filteredDocs: WarehouseDoc[], pickingL
   };
   const delayedDocsCount = filteredDocs.filter(isDocDelayed).length;
 
-  // Lead time calculations (ระยะเวลาจัดของ: วันที่จัดของเสร็จ ลบกับ วันที่ใบจอง)
+  // Lead time calculations (ระยะเวลาจัดของ: วันที่จัดของเสร็จ ลบกับ วันที่เปิดบิลขาย)
   const leadTimeRecords = filteredDocs.flatMap((doc) => {
     // A completion date is the source-of-truth for this KPI. This also keeps
     // a row with a valid completion timestamp from being lost when its status
     // label is inconsistent in an imported sheet.
-    if (!doc.completedDate) return [];
+    if (!warehouseDate(doc.completedDate)) return [];
     // The summary must represent the actual interval between the two source
     // dates. Do not count a legacy leadTimeDays value when a date is missing.
     const days = calculatePickingLeadTimeDays(doc);
     return days === undefined ? [] : [{ doc, days }];
   });
+  const measurableDocNos = new Set(leadTimeRecords.map(({ doc }) => doc.docNo.trim().toUpperCase()));
+  const leadTimeUnavailableDocs = filteredDocs
+    .filter((doc) => isWarehouseDocCompleted(doc) && !measurableDocNos.has(doc.docNo.trim().toUpperCase()))
+    .map((doc) => {
+      const hasSalesOrderDate = Boolean(warehouseDate(doc.salesOrderDate));
+      const hasCompletedDate = Boolean(warehouseDate(doc.completedDate));
+      const reason = !hasSalesOrderDate && !hasCompletedDate
+        ? 'ไม่มีวันที่เปิดบิลขายและวันที่จัดเสร็จ'
+        : !hasSalesOrderDate
+          ? 'ไม่มีวันที่เปิดบิลขาย'
+          : !hasCompletedDate
+            ? 'ไม่มีวันที่จัดเสร็จ'
+            : 'วันที่จัดเสร็จก่อนวันที่เปิดบิลขาย';
+      return { doc, reason };
+    });
   const docsWithLeadTime = leadTimeRecords.map((record) => record.doc);
   const leadTimeStats = (() => {
     const values = leadTimeRecords.map((record) => record.days);
@@ -201,6 +228,7 @@ export function calculateWarehouseMetrics(filteredDocs: WarehouseDoc[], pickingL
   const avgLeadTimeDays = docsWithLeadTime.length > 0 
     ? leadTimeStats.mean
     : 0;
+  const maximumLeadTimeRecords = leadTimeRecords.filter((record) => record.days === leadTimeStats.max);
   const onPlanLeadTimeCount = leadTimeRecords.filter((record) => record.days <= pickingLeadTimeTarget).length;
   const onPlanLeadTimePercent = leadTimeRecords.length > 0
     ? ((onPlanLeadTimeCount / leadTimeRecords.length) * 100).toFixed(1)
@@ -219,8 +247,59 @@ export function calculateWarehouseMetrics(filteredDocs: WarehouseDoc[], pickingL
   const transferredCount = filteredDocs.filter(d => d.transferredToDelivery === true).length;
   const transferredPct = completedDocsCount > 0 ? ((transferredCount / completedDocsCount) * 100).toFixed(1) : '0';
 
+  const dailySummaryMap = new Map<string, {
+    date: string;
+    inboundBookings: number;
+    pickedOrders: number;
+    transferredCount: number;
+    pendingCount: number;
+  }>();
+  filteredDocs.forEach((doc) => {
+    const date = warehouseDate(doc.receivedBookingDate || doc.date);
+    if (!date) return;
+    const daily = dailySummaryMap.get(date) || {
+      date,
+      inboundBookings: 0,
+      pickedOrders: 0,
+      transferredCount: 0,
+      pendingCount: 0,
+    };
+    daily.inboundBookings += 1;
+    if (isWarehouseDocCompleted(doc)) daily.pickedOrders += 1;
+    if (doc.transferredToDelivery) daily.transferredCount += 1;
+    if (!isWarehouseDocCompleted(doc)) daily.pendingCount += 1;
+    dailySummaryMap.set(date, daily);
+  });
+  const dailySummaries = Array.from(dailySummaryMap.values()).sort((a, b) => b.date.localeCompare(a.date));
+  const monthlySummaryMap = new Map<string, {
+    month: string;
+    inboundBookings: number;
+    pickedOrders: number;
+    pendingCount: number;
+  }>();
+  dailySummaries.forEach((day) => {
+    const month = day.date.slice(0, 7);
+    const monthly = monthlySummaryMap.get(month) || {
+      month,
+      inboundBookings: 0,
+      pickedOrders: 0,
+      pendingCount: 0,
+    };
+    monthly.inboundBookings += day.inboundBookings;
+    monthly.pickedOrders += day.pickedOrders;
+    monthly.pendingCount += day.pendingCount;
+    monthlySummaryMap.set(month, monthly);
+  });
+  const monthlySummaries = Array.from(monthlySummaryMap.values())
+    .map((monthly) => ({
+      ...monthly,
+      completionRate: monthly.inboundBookings > 0
+        ? +((monthly.pickedOrders / monthly.inboundBookings) * 100).toFixed(1)
+        : 0,
+    }))
+    .sort((a, b) => a.month.localeCompare(b.month));
 
-  return {totalDocsCount, completedDocsCount, completionPercent, pendingDocsCount, delayedDocsCount, isDocDelayed, leadTimeRecords, docsWithLeadTime, leadTimeStats, avgLeadTimeDays, onPlanLeadTimeCount, onPlanLeadTimePercent, dailyInboundBookings, dailyPickedOrders, transferredCount, transferredPct};
+  return {totalDocsCount, completedDocsCount, completionPercent, pendingDocsCount, delayedDocsCount, isDocDelayed, leadTimeRecords, leadTimeUnavailableDocs, maximumLeadTimeRecords, docsWithLeadTime, leadTimeStats, avgLeadTimeDays, onPlanLeadTimeCount, onPlanLeadTimePercent, dailyInboundBookings, dailyPickedOrders, transferredCount, transferredPct, dailySummaries, monthlySummaries};
 }
 
 export function formatShortDate(dateStr?: string): string {

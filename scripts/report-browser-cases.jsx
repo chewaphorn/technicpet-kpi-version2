@@ -44,7 +44,7 @@ const admin = { uid:'test-admin', displayName:'Report Test', email:'admin@exampl
 const item = quantity => ({ seqNo:1, productCode:'P1', productName:'Test Product', quantity, unit:'ชิ้น', unitPrice:100, totalPrice:quantity*100 });
 const order = (docNo, date, totalAmount, extra={}) => ({ docNo,date,totalAmount,customer:'Customer A',salesperson:'Sales A',status:'completed',items:[item(2)],totalItemsCount:1,totalQuantity:2,...extra });
 const orders = [order('BK1','2026-08-01',1000),order('BKET2','2026-08-02',3000,{docType:'BKET'}),order('BKR3','2026-08-03',-200,{docType:'BKR'})];
-const doc = (docNo, completedDate, extra={}) => ({ id:docNo,docNo,date:'2026-07-10',receivedBookingDate:'2026-07-10',completedDate,customer:'Warehouse Customer',itemsCount:1,status:completedDate?'completed':'pending',statusLabel:'',...extra });
+const doc = (docNo, completedDate, extra={}) => ({ id:docNo,docNo,date:'2026-07-10',receivedBookingDate:'2026-07-10',salesOrderDate:'2026-07-10',completedDate,customer:'Warehouse Customer',itemsCount:1,status:completedDate?'completed':'pending',statusLabel:'',...extra });
 const docs = [doc('W1','2026-07-10'),doc('W1','2026-07-10',{transferredToDelivery:true}),doc('W2','2026-07-12'),doc('W3','2026-07-15'),doc('W4',undefined),doc('W5','2026-07-14',{date:'',receivedBookingDate:''})];
 const trip = (docNo, extra={}) => ({ id:docNo,docNo,plannedDate:'2026-09-01',handoffDate:'2026-09-01',loadedDate:'2026-09-03',status:'completed',statusLabel:'',licensePlate:'Truck 1',customer:'Delivery Customer',weightTon:1,items:[item(2)],...extra });
 const trips = [trip('D1'),trip('D1',{items:[item(3)]}),trip('D2',{loadedDate:'2026-09-05',licensePlate:'Truck 2'}),trip('D3',{loadedDate:undefined,status:'in_transit',statusLabel:'โหลดแล้ว',licensePlate:'รอระบุ'}),trip('D4',{loadedDate:undefined,status:'delayed',licensePlate:'-'})];
@@ -56,13 +56,13 @@ window.__exports=[];
 window.__pdfWrites=[];
 
 window.runReportChecks = async () => {
-  const importedWarehouse = analyzeWarehouseData(parseGoogleSheetCsvText('เลขที่ใบจอง,สถานะ,วันที่รับเอกสาร,วันที่จัดเสร็จ,วันที่โหลดสินค้าจริง\nBK256909/03360,Ship,2026-09-29,2026-09-29,2026-09-30', 'warehouse'));
+  const importedWarehouse = analyzeWarehouseData(parseGoogleSheetCsvText('เลขที่ใบจอง,สถานะ,วันที่เปิดบิลขาย,วันที่รับเอกสาร,วันที่จัดเสร็จ,วันที่โหลดสินค้าจริง\nBK256909/03360,Ship,2026-09-29,2026-09-29,2026-09-29,2026-09-30', 'warehouse'));
   await render(<WarehouseReportView docs={importedWarehouse.warehouseDocs} onSelectDoc={()=>{}} />);
   const bookingRow = [...document.querySelectorAll('tbody tr')].find(row => text(row).includes('BK256909/03360'));
   assert(bookingRow, 'Imported booking appears in warehouse status report');
   assert(text(bookingRow).includes('2026-09-29'), 'Imported completion date is visible');
   assert(!text(bookingRow).includes('2026-09-30'), 'Loading date is not substituted for picking date');
-  assert(importedWarehouse.warehouseDocs[0].status === 'completed' && text(bookingRow).includes('ทันเป้า SLA'), 'Ship with completion date is completed and measured');
+  assert(importedWarehouse.warehouseDocs[0].status === 'completed' && text(bookingRow).includes('0 วัน'), 'Ship with completion date is completed and has zero-day lead time');
   log('Warehouse CSV import renders BK256909/03360 with real picking completion date');
   localStorage.setItem('technicpet_kpi_targets',JSON.stringify({monthlySalesTarget:2,warehousePickingLeadTimeTarget:2}));
   const before = JSON.stringify(trips);
@@ -77,8 +77,7 @@ window.runReportChecks = async () => {
   equal(calculateDeliveryMetrics([trip('Unknown',{plannedDate:undefined,handoffDate:undefined,loadedDate:undefined})]).leadTimeStats.count,0,'Do not fabricate one day');
   equal(filterDeliveryTrips(grouped,{status:'completed',vehicle:'Truck 2',search:'d2'}).length,1,'Delivery status, search and vehicle together');
   const warehouse = calculateWarehouseMetrics(aggregateWarehouseDocs(docs,orders),2);
-  equal([warehouse.totalDocsCount,warehouse.completedDocsCount,warehouse.pendingDocsCount,warehouse.leadTimeStats.count,warehouse.onPlanLeadTimeCount],[5,4,1,3,2],'Warehouse date-pair denominator and deduplication');
-  equal(warehouse.onPlanLeadTimePercent,'66.7','Configured picking target');
+  equal([warehouse.totalDocsCount,warehouse.completedDocsCount,warehouse.pendingDocsCount,warehouse.leadTimeStats.count,warehouse.leadTimeStats.min,warehouse.leadTimeStats.max,warehouse.onPlanLeadTimeCount],[5,4,1,4,0,5,2],'Warehouse date-pair denominator and deduplication');
   equal(filterWarehouseDocs(aggregateWarehouseDocs(docs),{status:'pending_all'}).length,1,'Missing dates do not bypass filters');
   equal(calculateSalesReportMetrics(filterSalesOrders(orders,{docType:'BKET'}),[],2).totalRevenueAmount,3000,'Sales type filter');
   equal(calculateSalesReportMetrics(orders,[],2).computedReps[0].completionRate,0.2,'Real company target for sales reps');
@@ -127,13 +126,13 @@ window.runReportChecks = async () => {
   log('Sales dashboard export callback and preview agree');
 
   await render(<WarehouseReportView docs={docs} detailedOrders={orders} onSelectDoc={()=>{}} currentUser={admin} onOpenPDFReport={open('warehouse')} />);
-  assert(text(document.body).includes('2 จาก 3 บิล (66.7%)'),'Warehouse dashboard uses same measured target');
+  assert(text(document.body).includes('คำนวณได้ 3 / 3 บิลจัดเสร็จ')&&text(document.body).includes('ค่าสูงสุด (MAX)'),'Warehouse dashboard shows current lead-time coverage and max');
   const statusSelect=[...document.querySelectorAll('select')].find(s=>[...s.options].some(o=>o.value==='pending_all'));
   await change(statusSelect,'pending_all');
   await click(containingButton('Export PDF'));
   equal(request.filters.status,'pending_all','Warehouse status forwarded');
   await render(preview({department:request.department,startDate:request.dateRange.start,endDate:request.dateRange.end,reportFilters:request.filters}));
-  assert(text(report()).includes('รวม 1 ใบ')&&text(report()).includes('บิลค้างจัด 1 ใบ'),'Warehouse PDF filters match dashboard');
+  assert(text(report()).includes('รับเข้าใบจองทั้งหมด1 ใบ')&&text(report()).includes('จัดได้ทั้งหมด0 ใบ')&&text(report()).includes('ค้างจัดทั้งหมด1 ใบ'),`Warehouse PDF filters match dashboard: ${text(report())}`);
   log('Warehouse dashboard export respects status and picking target');
 
   await render(<DeliveryReportView trips={trips} detailedSalesOrders={orders} onSelectDoc={()=>{}} currentUser={admin} onOpenPDFReport={open('delivery')} />);
@@ -249,7 +248,12 @@ window.runSystemChecks = async () => {
     await change(document.getElementById(`${dept}-page-size`),'25');
     equal(document.querySelectorAll('tbody tr').length,25,`${dept} page size changes`);
     await click(containingButton('Export Excel'));
-    equal(window.__excelExports.at(-1).rows.length,26,`${dept} exports all filtered rows, including other pages`);
+    const excelExport=window.__excelExports.at(-1);
+    equal(excelExport.rows.length,26,`${dept} exports all filtered rows, including other pages`);
+    if(dept==='warehouse') {
+      equal(excelExport.sheets.map(sheet=>sheet.name),['สรุป KPI','สรุปรายวัน','สรุปรายเดือน','สถานะการจัดสินค้า'],'Warehouse Excel exports current summary and trend sheets');
+      assert(excelExport.sheets[0].rows.some(row=>row['รายการ']==='จำนวนที่จัดได้ทั้งหมด'&&row['ค่า']===26),'Warehouse Excel summary matches filtered total');
+    }
   }
   log('Warehouse and delivery pagination, page sizes and Excel export include all filtered bills');
 
