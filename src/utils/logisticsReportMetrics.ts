@@ -46,6 +46,7 @@ export function aggregateWarehouseDocs(docs: WarehouseDoc[], detailedOrders: Det
         map.set(key, {
           ...doc,
           customer: matchedSalesOrder?.customer?.trim() || doc.customer,
+          salesOrderDate: matchedSalesOrder?.date || doc.salesOrderDate,
           items: initialItems,
           itemsCount: salesItemsCount || initialItems.length || doc.itemsCount,
         });

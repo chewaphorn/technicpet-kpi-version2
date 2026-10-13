@@ -36,6 +36,13 @@ test('date filtering never imports summary rows without a bill number', () => {
   assert.equal(result.totalOrders, 1);
   assert.equal(result.totalSalesAmount, 200);
 });
+test('warehouse aggregation joins the sales opening date by booking number', () => {
+  const docs = api.aggregateWarehouseDocs(
+    [{ docNo: ' bk001 ', customer: 'Customer A', status: 'pending', itemsCount: 1 }],
+    [sales({ date: '15/08/2569' })]
+  );
+  assert.equal(docs[0].salesOrderDate, '15/08/2569');
+});
 test('bill identity and document classification do not depend on letter case or an R inside ORDER', () => {
   const result = api.analyzeSalesData([sales({ docNo: 'order-1' }), sales({ docNo: 'ORDER-1' })]);
   assert.equal(result.totalOrders, 1);

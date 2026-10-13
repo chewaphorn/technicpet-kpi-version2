@@ -198,6 +198,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
           'ลำดับ': index + 1,
           'เลขที่ใบจอง': doc.docNo,
           'ลูกค้า': doc.customer || '-',
+          'วันที่เปิดบิลขาย': doc.salesOrderDate || '-',
           'วันที่รับใบจอง': doc.receivedBookingDate || doc.date || '-',
           'วันที่จัดเสร็จ': doc.completedDate || '-',
           'จำนวนวันค้างจัดของ': isCompleted ? '-' : (doc.pendingDays ?? '-'),
@@ -217,8 +218,9 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
       );
       worksheet['!cols'] = [
         { wch: 8 }, { wch: 20 }, { wch: 30 }, { wch: 16 },
-        { wch: 16 }, { wch: 18 }, { wch: 16 }, { wch: 24 },
-        { wch: 16 }, { wch: 24 }, { wch: 18 }, { wch: 18 },
+        { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 16 },
+        { wch: 24 }, { wch: 16 }, { wch: 24 }, { wch: 18 },
+        { wch: 18 },
       ];
 
       const workbook = XLSX.utils.book_new();
@@ -447,7 +449,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
               </h3>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              แสดงเลขที่บิล วันที่รับใบจอง วันที่จัดเสร็จ จำนวนวันค้างจัดของ (สำหรับบิลค้างจัด) ติดตาม Lead Time และกดดูรายการสินค้า (ทั้งหมด {filteredDocs.length} รายการ)
+              แสดงเลขที่ใบจอง วันที่เปิดบิลขาย วันที่รับใบจอง วันที่จัดเสร็จ จำนวนวันค้างจัดของ (สำหรับบิลค้างจัด) ติดตาม Lead Time และกดดูรายการสินค้า (ทั้งหมด {filteredDocs.length} รายการ)
             </p>
           </div>
 
@@ -497,6 +499,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
               <tr>
                 <th className="py-3.5 px-4 whitespace-nowrap">เลขที่ใบจอง</th>
                 <th className="py-3.5 px-4 whitespace-nowrap">ลูกค้า</th>
+                <th className="py-3.5 px-4 whitespace-nowrap">วันที่เปิดบิลขาย</th>
                 <th className="py-3.5 px-4 whitespace-nowrap">วันที่รับใบจอง</th>
                 <th className="py-3.5 px-4 whitespace-nowrap">วันที่จัดเสร็จ</th>
                 <th className="py-3.5 px-4 text-center bg-amber-50/80 text-amber-900 border-x border-amber-200/70 whitespace-nowrap">
@@ -524,7 +527,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
               {filteredDocs.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-16 text-center text-slate-400">
+                  <td colSpan={8} className="py-16 text-center text-slate-400">
                     <div className="max-w-md mx-auto space-y-3">
                       <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
                         <Boxes className="w-6 h-6" />
@@ -580,6 +583,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
                         {doc.customer || '-'}
                       </td>
 
+                      <td className="py-3.5 px-4 text-slate-600 font-mono text-[11px] whitespace-nowrap">{doc.salesOrderDate || '-'}</td>
                       <td className="py-3.5 px-4 text-slate-600 font-mono text-[11px] whitespace-nowrap">{doc.receivedBookingDate || doc.date || '-'}</td>
                       <td className="py-3.5 px-4 text-slate-700 font-mono text-[11px] whitespace-nowrap">
                         {doc.completedDate || '-'}
