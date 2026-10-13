@@ -489,10 +489,10 @@ export const SalesReportView: React.FC<SalesReportViewProps> = ({
   const repOrdersForModal = useMemo(() => {
     if (!selectedRepForModal) return [];
     const targetName = selectedRepForModal.name.trim().toLowerCase();
-    return detailedOrders.filter(
+    return filteredOrders.filter(
       (ord) => ord.salesperson && ord.salesperson.trim().toLowerCase() === targetName
     );
-  }, [selectedRepForModal, detailedOrders]);
+  }, [selectedRepForModal, filteredOrders]);
 
   const hasData = detailedOrders.length > 0 || (summary?.totalOrdersCount ?? 0) > 0 || (summary?.totalRevenueAmount ?? 0) > 0;
 
