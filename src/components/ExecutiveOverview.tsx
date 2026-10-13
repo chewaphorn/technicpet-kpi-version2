@@ -353,7 +353,6 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
   const [searchInput, setSearchInput] = useState('');
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState(() => `${formatDisplayDate(defaultStartDate)} - ${formatDisplayDate(autoMaxDate)}`);
   const kpiTargets = useMemo<ExecutiveKpiTargets>(() => ({
     deliveryLeadTimeDays: reportTargets.salesToLoadedLeadTimeTargetDays,
     onTimeDeliveryPercent: reportTargets.deliveryCompletionTargetPercent,
@@ -368,14 +367,12 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
       setEndDate(autoMaxDate);
       setAppliedStartDate(defaultStartDate);
       setAppliedEndDate(autoMaxDate);
-      setLastUpdated(`${formatDisplayDate(defaultStartDate)} - ${formatDisplayDate(autoMaxDate)}`);
     } else if (!hasDepartmentData) {
       hasAppliedFilter.current = false;
       setStartDate('');
       setEndDate('');
       setAppliedStartDate('');
       setAppliedEndDate('');
-      setLastUpdated('');
     }
   }, [detailedOrders, warehouseDocs, deliveryTrips, defaultStartDate, autoMaxDate]);
 
@@ -392,11 +389,11 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Format Helper DD/MM/YYYY
+  // Format ISO date for the filter controls and active-filter summary.
   function formatDisplayDate(isoStr: string) {
     if (!isoStr) return '';
-    const [y, m, d] = isoStr.split('-');
-    return `${d}/${m}/${y}`;
+    const [year, month, day] = isoStr.split('-');
+    return `${day}/${month}/${year}`;
   }
 
   // Apply Filter Action
@@ -410,7 +407,6 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
 
     setTimeout(() => {
       setIsApplying(false);
-      setLastUpdated(`${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)}`);
     }, 200);
   };
 
@@ -423,7 +419,6 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
     setAppliedStartDate(defaultStartDate);
     setAppliedEndDate(autoMaxDate);
     setAppliedDept('ทั้งหมด');
-    setLastUpdated(`${formatDisplayDate(defaultStartDate)} - ${formatDisplayDate(autoMaxDate)}`);
   };
 
   // Check if any filter is non-default
@@ -934,11 +929,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
           
         </div>
         <div className="flex items-center gap-3 self-start sm:self-auto flex-wrap">
-          <a href="#booking-tracking" className="px-4 py-2 rounded-xl bg-teal-700 text-white text-sm font-bold">ติดตามใบจอง</a>
-          <div className="flex items-center gap-2 text-xs text-slate-600 font-semibold bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-2xs">
-            <Calendar className="w-4 h-4 text-blue-600" />
-            <span>ช่วงข้อมูลที่แสดง: <strong className="text-slate-900">{lastUpdated}</strong></span>
-          </div>
+         
 
           {/* All-in-One Synchronous/Parallel Sync with Promise.all() */}
           {onSyncAllDepartments && (!currentUser || currentUser.role === 'admin') && (

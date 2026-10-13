@@ -508,7 +508,6 @@ export function calculateDeliveryMetrics(filteredTrips: DeliveryTrip[]) {
   const totalBillsCount = filteredTrips.length;
   const completedBillsCount = filteredTrips.filter(isCompletedTrip).length;
   const completedBillsRate = totalBillsCount > 0 ? ((completedBillsCount / totalBillsCount) * 100).toFixed(1) : '0';
-  
   // 1. 'จำนวนรถที่จัดเส้นทาง' (นับทะเบียนรถไม่ซ้ำในข้อมูลที่กรอง)
   const uniqueVehiclesCount = new Set(
     filteredTrips.map(t => (t.licensePlate || t.vehicleNo || '').trim()).filter(p => p && p !== '-' && p !== 'รอระบุ')

@@ -436,9 +436,9 @@ export const DeliveryReportView: React.FC<DeliveryReportViewProps> = ({
       </div>
 
       {/* แถบการ์ดสรุปผล KPI: Clean & White Theme Modern Minimalist */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 items-stretch">
         {/* การ์ดที่ 1: จำนวนบิลทั้งหมด */}
-        <div className="bg-white p-4.5 rounded-2xl border border-slate-200/90 shadow-2xs hover:border-slate-300 transition-all flex items-center justify-between">
+        <div className="bg-white p-4.5 min-h-[124px] rounded-2xl border border-slate-200/90 shadow-2xs hover:border-slate-300 transition-all flex items-center justify-between gap-3">
           <div>
             <span className="text-[11.5px] font-bold text-slate-500 tracking-wider uppercase block">
               จำนวนบิลทั้งหมด
@@ -458,7 +458,7 @@ export const DeliveryReportView: React.FC<DeliveryReportViewProps> = ({
         </div>
 
         {/* การ์ดที่ 2: จำนวนบิลที่ส่งสำเร็จ */}
-        <div className="bg-white p-4.5 rounded-2xl border border-slate-200/90 shadow-2xs hover:border-slate-300 transition-all flex items-center justify-between">
+        <div className="bg-white p-4.5 min-h-[124px] rounded-2xl border border-slate-200/90 shadow-2xs hover:border-slate-300 transition-all flex items-center justify-between gap-3">
           <div>
             <span className="text-[11.5px] font-bold text-slate-500 tracking-wider uppercase block">
               จำนวนบิลที่ส่งสำเร็จ
@@ -481,7 +481,7 @@ export const DeliveryReportView: React.FC<DeliveryReportViewProps> = ({
         </div>
 
         {/* การ์ดที่ 3: จำนวนบิลที่ค้างส่ง (ปรับจากจำนวนเที่ยวที่ส่งล่าช้า) */}
-        <div className="bg-white p-4.5 rounded-2xl border border-slate-200/90 shadow-2xs hover:border-slate-300 transition-all flex items-center justify-between">
+        <div className="bg-white p-4.5 min-h-[124px] rounded-2xl border border-slate-200/90 shadow-2xs hover:border-slate-300 transition-all flex items-center justify-between gap-3">
           <div>
             <span className="text-[11.5px] font-bold text-slate-500 tracking-wider uppercase block">
               จำนวนบิลที่ค้างส่ง
@@ -505,25 +505,6 @@ export const DeliveryReportView: React.FC<DeliveryReportViewProps> = ({
           </div>
         </div>
 
-        {/* การ์ดที่ 4: จำนวนรถที่ออกต่อวัน (นับทะเบียนรถไม่ซ้ำที่วิ่งรอบจัดส่ง) */}
-        <div className="bg-white p-4.5 rounded-2xl border border-slate-200/90 shadow-2xs hover:border-slate-300 transition-all flex items-center justify-between">
-          <div>
-            <span className="text-[11.5px] font-bold text-slate-500 tracking-wider uppercase block">
-              จำนวนรถที่ออกต่อวัน
-            </span>
-            <div className="mt-1.5 flex items-baseline gap-1.5">
-              <span className="text-2xl sm:text-3xl font-bold text-blue-900 tracking-tight tabular-nums">{uniqueVehiclesCount.toLocaleString()}</span>
-              <span className="text-xs font-semibold text-slate-500">คัน/วัน</span>
-            </div>
-            <p className="text-[11px] text-slate-500 font-medium mt-1 flex items-center gap-1.5 truncate">
-              <Truck className="w-3 h-3 text-blue-500 shrink-0" />
-              <span>จัดวิ่ง {filteredTrips.length} เที่ยวจัดส่ง</span>
-            </p>
-          </div>
-          <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 border border-blue-100 shadow-2xs">
-            <Truck className="w-5 h-5 text-blue-600" />
-          </div>
-        </div>
       </div>
 
       {/* แถบการวิเคราะห์ระยะเวลาจัดส่งของแต่ละเลขที่บิล (Max, Mean, Min Lead Time Banner & Chart) */}
