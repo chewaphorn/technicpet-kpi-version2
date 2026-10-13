@@ -1260,8 +1260,6 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
         )}
       </div>
 
-      <BookingTrackingSection orders={detailedOrders} warehouse={warehouseDocs} trips={deliveryTrips} />
-
       {/* Executive Dashboard: Departmental Sections */}
       <div className="space-y-8">
         {/* 1. Sales Department Section (แสดงเมื่อเลือก 'ทั้งหมด' หรือ 'ฝ่ายขาย') */}
@@ -2164,6 +2162,8 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
           </div>
         </div>
       )}
+
+      <BookingTrackingSection orders={detailedOrders} warehouse={warehouseDocs} trips={deliveryTrips} />
     </div>
   );
 };
