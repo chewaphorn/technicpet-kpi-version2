@@ -132,6 +132,15 @@ try {
   const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},sessionId);
   fs.writeFileSync(path.join(resultsDir,'warehouse-preview.png'),Buffer.from(shot.data,'base64'));
   if(outcome.exceptionDetails) throw Error(outcome.exceptionDetails.exception?.description || JSON.stringify(outcome.exceptionDetails));
+  for(const width of [390,768,1440]){
+    await send('Emulation.setDeviceMetricsOverride',{width,height:1100,deviceScaleFactor:1,mobile:false},sessionId);
+    const overview=await send('Runtime.evaluate',{expression:'window.runOverviewResponsiveChecks()',awaitPromise:true,returnByValue:true},sessionId);
+    if(overview.exceptionDetails) throw Error(overview.exceptionDetails.exception?.description || JSON.stringify(overview.exceptionDetails));
+    if(width===390){
+      const mobileShot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},sessionId);
+      fs.writeFileSync(path.join(resultsDir,'overview-mobile.png'),Buffer.from(mobileShot.data,'base64'));
+    }
+  }
   const system=await send('Runtime.evaluate',{expression:'window.runSystemChecks()',awaitPromise:true,returnByValue:true},sessionId);
   if(system.exceptionDetails) throw Error(system.exceptionDetails.exception?.description || JSON.stringify(system.exceptionDetails));
   const pagination=await send('Runtime.evaluate',{expression:'window.runPaginationChecks()',awaitPromise:true,returnByValue:true},sessionId);

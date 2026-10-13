@@ -15,6 +15,7 @@ import { HelpModal } from '../src/components/HelpModal';
 import { ProfileModal } from '../src/components/ProfileModal';
 import { DocumentTrackingModal } from '../src/components/DocumentTrackingModal';
 import { BookingTrackingSection } from '../src/components/BookingTrackingSection';
+import { buildBookingTracking } from '../src/utils/bookingTracking';
 import { GoogleSheetIntegrationModal } from '../src/components/GoogleSheetIntegrationModal';
 import { createReportRequest } from '../src/utils/reportRequest';
 import { aggregateWarehouseDocs, filterWarehouseDocs, calculateWarehouseMetrics, aggregateDeliveryTrips, filterDeliveryTrips, calculateDeliveryMetrics } from '../src/utils/logisticsReportMetrics';
@@ -107,7 +108,8 @@ window.runReportChecks = async () => {
 
   await render(preview({department:'sales',startDate:'2026-08-02',endDate:'',reportFilters:{department:'sales',docType:'BKET'}}));
   assert(text(report()).includes('ยอดคำสั่งซื้อรวม 1 บิล') && text(report()).includes('฿3,000'),'Filtered sales PDF');
-  assert(text(report()).includes('เทียบเป้า 2 ลบ.'),'PDF uses current sales target');
+  assert(text(report()).includes('เป้าหมาย ≥ ฿2 ล้าน/เดือน') && text(report()).includes('ยอดขายเฉลี่ยต่อเดือน'),'PDF uses current monthly sales target');
+  assert(report().querySelectorAll('[data-testid^="pdf-goal-"]').length===2,'Sales PDF shows both current department goals');
   assert(!text(report()).includes('สำเร็จแล้ว 100%'),'No fake success rate');
   await render(preview({department:'sales',startDate:'2030-01-01',endDate:'2030-01-02',salesSummary:{totalRevenueAmount:999999},salesReps:[{name:'Stale sales rep'}]}));
   assert(text(report()).includes('ยอดคำสั่งซื้อรวม 0 บิล')&&!text(report()).includes('999,999')&&!text(report()).includes('Stale sales rep'),'Empty date range does not fall back to summaries');
@@ -123,6 +125,7 @@ window.runReportChecks = async () => {
   equal(request.dateRange,{start:'2026-08-02',end:''},'Sales button forwards visible dates');
   await render(preview({department:request.department,startDate:request.dateRange.start,endDate:request.dateRange.end,reportFilters:request.filters}));
   assert(text(report()).includes('฿2,800')&&text(report()).includes('ยอดคำสั่งซื้อรวม 2 บิล'),'Sales button opens matching data');
+  assert(text(report()).includes('เป้าหมาย ≥ ฿20,000'),'Sales PDF includes current average-bill target');
   log('Sales dashboard export callback and preview agree');
 
   await render(<WarehouseReportView docs={docs} detailedOrders={orders} onSelectDoc={()=>{}} currentUser={admin} onOpenPDFReport={open('warehouse')} />);
@@ -133,6 +136,7 @@ window.runReportChecks = async () => {
   equal(request.filters.status,'pending_all','Warehouse status forwarded');
   await render(preview({department:request.department,startDate:request.dateRange.start,endDate:request.dateRange.end,reportFilters:request.filters}));
   assert(text(report()).includes('รับเข้าใบจองทั้งหมด1 ใบ')&&text(report()).includes('จัดได้ทั้งหมด0 ใบ')&&text(report()).includes('ค้างจัดทั้งหมด1 ใบ'),`Warehouse PDF filters match dashboard: ${text(report())}`);
+  assert(report().querySelectorAll('[data-testid^="pdf-goal-"]').length===2 && text(report()).includes('Picking Lead Time'),'Warehouse PDF shows current completion and picking targets');
   log('Warehouse dashboard export respects status and picking target');
 
   await render(<DeliveryReportView trips={trips} detailedSalesOrders={orders} onSelectDoc={()=>{}} currentUser={admin} onOpenPDFReport={open('delivery')} />);
@@ -142,15 +146,70 @@ window.runReportChecks = async () => {
   equal(request.filters.vehicle,'Truck 2','Vehicle forwarded');
   await render(preview({department:request.department,startDate:request.dateRange.start,endDate:request.dateRange.end,reportFilters:request.filters}));
   assert(text(report()).includes('สำเร็จ 1 จาก 1 บิล')&&text(report()).includes('ทะเบียน: Truck 2'),'Delivery PDF filters match dashboard');
+  assert(report().querySelectorAll('[data-testid^="pdf-goal-"]').length===2 && text(report()).includes('เปิดบิลขาย → โหลดเสร็จ'),'Delivery PDF shows current completion and sales-to-loaded targets');
   log('Delivery dashboard export respects vehicle and completion rules');
 
-  await render(<ExecutiveOverview kpis={{}} trendData={[]} detailedOrders={orders} warehouseDocs={docs} deliveryTrips={trips} onSearchDoc={()=>{}} currentUser={admin} onExportPDF={(dept,start,end)=>{request=createReportRequest(dept,start,end);}} />);
+  const overviewOrders=[...orders,order('D1','2026-08-30',1000,{salesperson:'พนักงานขายชื่อยาวมากสำหรับทดสอบการขึ้นบรรทัด'}),order('D2','2026-08-29',1000,{salesperson:'พนักงานขายชื่อยาวมากสำหรับทดสอบการขึ้นบรรทัด'})];
+  const overviewTrips=trips.map(deliveryTrip=>({...deliveryTrip,orderDate:'2026-09-01'}));
+  await render(<ExecutiveOverview kpis={{}} trendData={[]} detailedOrders={overviewOrders} warehouseDocs={docs} deliveryTrips={overviewTrips} onSearchDoc={()=>{}} currentUser={admin} onExportPDF={(dept,start,end)=>{request=createReportRequest(dept,start,end);}} />);
+  const goalCard=document.querySelector('[data-testid="overview-department-goals"]');
+  assert(goalCard&&text(goalCard).includes('ผลลัพธ์เทียบเป้าหมายรายแผนก'),'Overview department goal comparison is visible');
+  equal([...goalCard.querySelectorAll('section h4')].map(text),['ฝ่ายขาย','คลังสินค้า','ขนส่ง'],'Overview goal cards follow sales, warehouse, delivery order');
+  const goal=id=>text(goalCard.querySelector(`[data-testid="overview-goal-${id}"]`));
+  assert(goalCard.querySelectorAll('[role="img"]').length===6,'Six independent result-versus-target bullet charts are shown');
+  assert(goal('warehouse-completion').includes('ผลจริง 75%')&&goal('warehouse-completion').includes('เป้าหมาย ≥ 80%')&&goal('warehouse-completion').includes('3/4 บิล'),'Warehouse completion compares unique filtered bills to target');
+  assert(goal('warehouse-picking-days').includes('ผลจริง 2.3 วัน')&&goal('warehouse-picking-days').includes('เป้าหมาย ≤ 2 วัน')&&goal('warehouse-picking-days').includes('3 บิล'),'Warehouse picking comparison uses sales-open-to-picked mean');
+  assert(goal('sales-monthly').includes('ผลจริง ฿0.002 ล้าน')&&goal('sales-monthly').includes('เป้าหมาย ≥ ฿2 ล้าน')&&goal('sales-monthly').includes('3 เดือน'),'Monthly sales goal compares against average per selected calendar month');
+  assert(goal('sales-average-bill').includes('ผลจริง ฿1,160')&&goal('sales-average-bill').includes('เป้าหมาย ≥ ฿20,000'),'Average sale per bill compares with its own goal');
+  assert(goal('delivery-completion').includes('ผลจริง 75%')&&goal('delivery-completion').includes('เป้าหมาย ≥ 80%')&&goal('delivery-completion').includes('3/4 บิล'),'Delivery completion compares unique filtered bills to target');
+  assert(goal('delivery-sales-to-loaded-days').includes('ผลจริง 5.5 วัน')&&goal('delivery-sales-to-loaded-days').includes('เป้าหมาย ≤ 6 วัน')&&goal('delivery-sales-to-loaded-days').includes('2 บิล'),'Delivery duration compares matched sales-opening-to-loaded mean with target');
+  const trackingSection=document.getElementById('booking-tracking');
+  const trackingAverageLabel=[...trackingSection.querySelectorAll('p')].find(node=>text(node)==='เฉลี่ยสร้างใบจองถึงโหลดครบ (วัน)');
+  assert(text(trackingAverageLabel?.parentElement).includes('5.5'),'Booking tracker and delivery target show the same average for the default period');
+  equal([...trackingSection.querySelectorAll('input[type=date]')].map(input=>input.value),['2026-07-10','2026-09-01'],'Booking tracker starts with overview period');
   await click(containingButton('Export PDF'));
   equal(request.department,'overview','Overview routes to overview report');
   equal(request.dateRange,{start:'2026-07-10',end:'2026-09-01'},'Overview applied period forwarded');
+  const expectedGoalTexts=Object.fromEntries(['sales-monthly','sales-average-bill','warehouse-completion','warehouse-picking-days','delivery-completion','delivery-sales-to-loaded-days'].map(id=>[id,goal(id)]));
+  await render(preview({department:'overview',startDate:request.dateRange.start,endDate:request.dateRange.end,detailedSalesOrders:overviewOrders,warehouseDocs:docs,deliveryTrips:overviewTrips}));
+  assert(report().querySelectorAll('[data-testid^="pdf-goal-"]').length===6,'Overview PDF shows all six current department targets');
+  for(const [id,expected] of Object.entries(expectedGoalTexts)) equal(text(report().querySelector(`[data-testid="pdf-goal-${id}"]`)),expected,`Overview PDF and dashboard agree on ${id}`);
+  assert(text(report()).includes('กราฟสถิติยอดขายรายเดือน') && text(report()).includes('2026-08'),'Overview PDF includes the current sales trend');
+  assert(!text(report()).includes('อันดับผลงานพนักงานขายยอดเยี่ยม')&&!text(report()).includes('แนวโน้ม KPI คลังสินค้ารายเดือน')&&!text(report()).includes('Fleet Operations & Logistics Summary'),'Executive PDF excludes stale department detail sections');
+  await render(<ExecutiveOverview kpis={{}} trendData={[]} detailedOrders={overviewOrders} warehouseDocs={docs} deliveryTrips={overviewTrips} onSearchDoc={()=>{}} currentUser={admin} onExportPDF={(dept,start,end)=>{request=createReportRequest(dept,start,end);}} />);
+  const salesChart=()=>[...document.querySelectorAll('h3')].find(heading=>text(heading).startsWith('กราฟสถิติยอดขาย'));
+  const departmentFilter=[...document.querySelectorAll('select')].find(select=>[...select.options].some(option=>option.value==='คลังสินค้า'));
+  assert(salesChart(),'Sales chart is visible when all departments are selected');
+  for(const [department,visible] of [['คลังสินค้า',false],['การจัดส่ง',false],['ฝ่ายขาย',true],['ทั้งหมด',true]]) {
+    await change(departmentFilter,department);
+    await click(document.getElementById('btn-overview-filter-submit'));
+    assert(Boolean(salesChart())===visible,`Sales chart visibility follows applied department ${department}`);
+    if(department==='คลังสินค้า') assert(text(document.querySelector('#section-warehouse-department')).includes('4 ใบ'),'Warehouse cards use the selected date window');
+    if(department==='การจัดส่ง') assert(text(document.querySelector('#section-delivery-department')).includes('4 ใบ'),'Delivery cards use the selected date window');
+    assert(!['สรุปผลงานฝ่ายขายและพนักงานขาย','รายการเอกสารคลังสินค้าตามตัวกรอง','รายการเที่ยวจัดส่งตามตัวกรอง'].some(title=>text(document.getElementById('root')).includes(title)),`Expanded department detail panels stay removed for ${department}`);
+  }
+  await change(departmentFilter,'ฝ่ายขาย');
+  await click(document.getElementById('btn-overview-filter-submit'));
+  await click([...document.querySelectorAll('button')].find(control=>/\d{2}\/\d{2}\/\d{4} - \d{2}\/\d{2}\/\d{4}/.test(text(control))));
+  const overviewDateInputs=[...document.querySelectorAll('input[type=date]')].filter(input=>!input.closest('#booking-tracking'));
+  await change(overviewDateInputs[0],'2026-08-29');
+  await change(overviewDateInputs[1],'2026-08-30');
+  await click(containingButton('นำไปใช้ (Apply)'));
+  assert(text(document.getElementById('card-sales-total-orders')).includes('2 ใบ'),'Sales KPI card follows the selected date range without an expanded sales table');
+  await render(<ExecutiveOverview kpis={{}} trendData={[]} detailedOrders={overviewOrders} warehouseDocs={docs} deliveryTrips={[...overviewTrips]} onSearchDoc={()=>{}} currentUser={admin} />);
+  assert(text(document.getElementById('root')).includes('29/08/2026 - 30/08/2026')&&text(document.getElementById('root')).includes('แผนก: ฝ่ายขาย'),'A background data refresh does not reset the applied department or date range');
+  assert(text(document.getElementById('card-sales-total-orders')).includes('2 ใบ'),'Filtered sales KPI remains stable after background refresh');
+  await click([...document.querySelectorAll('button')].find(control=>/\d{2}\/\d{2}\/\d{4} - \d{2}\/\d{2}\/\d{4}/.test(text(control))));
+  const emptyPeriodInputs=[...document.querySelectorAll('input[type=date]')].filter(input=>!input.closest('#booking-tracking'));
+  await change(emptyPeriodInputs[0],'2030-01-01');
+  await change(emptyPeriodInputs[1],'2030-01-31');
+  await click(containingButton('นำไปใช้ (Apply)'));
+  await render(<ExecutiveOverview kpis={{}} trendData={[{month:'ม.ค. 2030',totalVolume:999}]} detailedOrders={overviewOrders} warehouseDocs={docs} deliveryTrips={overviewTrips} onSearchDoc={()=>{}} currentUser={admin} />);
+  assert(text(salesChart()?.parentElement?.parentElement?.parentElement).includes('ไม่มีข้อมูลยอดขายตามช่วงเวลาที่เลือก'),'Empty selected period does not revive stale legacy sales trend');
   log('Executive Overview exports its applied period');
 
   await render(<NewReportModal isOpen onClose={()=>{}} {...source} onOpenPDFPreview={(dept,start,end)=>{request=createReportRequest(dept,start,end);}} />);
+  assert(!text(document.getElementById('root')).includes('สรุปข้อมูลที่จะส่งออกในรายงาน'),'Export dialog omits the crossed-out data summary');
   await click(containingButton('ฝ่ายจัดส่ง (Logistics & Fleet)'));
   equal([...document.querySelectorAll('input[type=date]')].map(i=>i.value),['2026-09-01','2026-09-01'],'Global export uses delivery dates, not sales dates');
   await click(containingButton('ฝ่ายคลังสินค้า (Warehouse)'));
@@ -189,6 +248,28 @@ window.runReportChecks = async () => {
   return {passed:window.__passes, exports:window.__exports.map(({text,...meta})=>meta)};
 };
 
+window.runOverviewResponsiveChecks = async () => {
+  const longText='ชื่อลูกค้าและสถานที่จัดส่งที่ยาวเป็นพิเศษเพื่อทดสอบการแสดงผลโดยไม่ตัดข้อมูล';
+  const longOrder=order('BK-LONG-001','2026-09-01',123456,{customer:longText,salesperson:'พนักงานฝ่ายขายชื่อยาวเป็นพิเศษสำหรับทดสอบหน้าจอขนาดเล็ก'});
+  const longDoc=doc('BK-LONG-001','2026-09-02',{date:'-',receivedBookingDate:'2026-09-01',customer:longText,pickerName:longText});
+  const longTrip=trip('BK-LONG-001',{deliveryNo:'DL-LONG-001',salesOrderNo:'BK-LONG-001',plannedDate:'-',orderDate:'2026-09-01',destination:longText,driverName:longText});
+  await render(<ExecutiveOverview kpis={{}} trendData={[]} detailedOrders={[longOrder]} warehouseDocs={[longDoc]} deliveryTrips={[longTrip]} onSearchDoc={()=>{}} currentUser={admin} />);
+  const departmentFilter=[...document.querySelectorAll('select')].find(select=>[...select.options].some(option=>option.value==='คลังสินค้า'));
+  for(const department of ['ทั้งหมด','ฝ่ายขาย','คลังสินค้า','การจัดส่ง']) {
+    await change(departmentFilter,department);
+    await click(document.getElementById('btn-overview-filter-submit'));
+    const pageWidth=document.documentElement.scrollWidth;
+    assert(pageWidth<=window.innerWidth+2,`Overview ${department} fits the ${window.innerWidth}px viewport without page-level horizontal overflow (${pageWidth}px)`);
+    for(const card of document.querySelectorAll('[id^="card-"]')) {
+      assert(card.scrollWidth<=card.clientWidth+2,`KPI card ${card.id} does not clip text at ${window.innerWidth}px`);
+      assert(!card.querySelector('.truncate'),`KPI card ${card.id} shows its full title and note`);
+    }
+    assert(!['สรุปผลงานฝ่ายขายและพนักงานขาย','รายการเอกสารคลังสินค้าตามตัวกรอง','รายการเที่ยวจัดส่งตามตัวกรอง'].some(title=>text(document.getElementById('root')).includes(title)),`No expanded department detail at ${window.innerWidth}px`);
+  }
+  log(`Overview layout and KPI text at ${window.innerWidth}px`);
+  return {width:window.innerWidth};
+};
+
 window.runSystemChecks = async () => {
   await render(null);
   let loggedIn = null;
@@ -216,8 +297,12 @@ window.runSystemChecks = async () => {
   await render(null);
   await render(<SettingsModal isOpen currentUser={admin} onClose={()=>{}} />);
   assert(!document.getElementById('tab-kpi-targets').disabled, 'Admin can open KPI settings');
+  const targetIds=['target-warehouse-completion','target-warehouse-picking-days','target-sales-monthly','target-sales-average-bill','target-delivery-completion','target-delivery-sales-to-loaded-days'];
+  equal(targetIds.map(id=>Number(document.getElementById(id)?.value)),[80,2,2,20000,80,6],'Six department KPI goals load with configured and requested defaults');
+  assert(!text(document.getElementById('root')).includes('On-Time Delivery')&&!text(document.getElementById('root')).includes('Fleet Utilization'),'Removed KPI goals are absent from settings');
+  await change(document.getElementById('target-sales-average-bill'),'25000');
   await click(document.getElementById('btn-save-settings'));
-  assert(window.__savedTargets?.kpiTargetDays > 0, 'Admin submits shared settings');
+  assert(window.__savedTargets?.averageSalesPerBillTargetBaht===25000&&window.__savedTargets?.deliveryCompletionTargetPercent===80&&!Object.hasOwn(window.__savedTargets,'slaTargetPercent'),'Admin submits only the six new department goals');
   log('Settings hides KPI editing from non-admins and submits admin settings');
 
   for (const node of [<HelpModal isOpen onClose={()=>{}} />, <ProfileModal isOpen currentUser={admin} onClose={()=>{}} onLogout={()=>{}} onUpdateUser={()=>{}} />, <Header currentScreen="warehouse" currentUser={admin} onOpenSettings={()=>{}} onOpenHelp={()=>{}} onOpenProfile={()=>{}} />]) {
@@ -233,7 +318,7 @@ window.runSystemChecks = async () => {
   assert(text(document.getElementById('root')).includes('โหลดสินค้าแล้ว (Loaded)'), 'Loaded evidence takes precedence over old delayed label');
   await render(<DocumentTrackingModal docNo="missing" onClose={()=>{}} />);
   assert(text(document.getElementById('root')).includes('ไม่พบ'), 'Unknown booking has clear empty state');
-  await render(<BookingTrackingSection orders={orders} warehouse={[]} trips={[]} />);
+  await render(<BookingTrackingSection rows={buildBookingTracking(orders,[],[])} />);
   await change(document.querySelector('input'), 'BKR3');
   assert(text(document.querySelector('tbody')).includes('BKR3')&&!text(document.querySelector('tbody')).includes('BKET2'),'Booking search restricts results');
   log('Booking tracking: aliases, incomplete loading, completion evidence and no-result searches');
@@ -253,6 +338,9 @@ window.runSystemChecks = async () => {
     if(dept==='warehouse') {
       equal(excelExport.sheets.map(sheet=>sheet.name),['สรุป KPI','สรุปรายวัน','สรุปรายเดือน','สถานะการจัดสินค้า'],'Warehouse Excel exports current summary and trend sheets');
       assert(excelExport.sheets[0].rows.some(row=>row['รายการ']==='จำนวนที่จัดได้ทั้งหมด'&&row['ค่า']===26),'Warehouse Excel summary matches filtered total');
+      assert(excelExport.sheets[0].rows.some(row=>row['รายการ']==='อัตราจัดสำเร็จ (%)'&&row['ค่า']===100),'Warehouse Excel exports the completion rate shown on the dashboard');
+      assert(excelExport.sheets[0].rows.some(row=>row['รายการ']==='Lead Time เฉลี่ย (วัน)'&&row['ค่า']===2),'Warehouse Excel exports the average lead time shown below the table');
+      equal(Object.keys(excelExport.sheets[3].rows[0]),['เลขที่ใบจอง','ลูกค้า','วันที่เปิดบิลขาย','วันที่รับใบจอง','วันที่จัดเสร็จ','จำนวนวันค้างจัดของ','Lead Time (วัน)','จำนวนรายการ'],'Warehouse Excel detail columns match the visible report table');
     }
   }
   log('Warehouse and delivery pagination, page sizes and Excel export include all filtered bills');

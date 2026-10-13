@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { DEFAULT_KPI_TARGETS } from '../utils/kpiTargets';
 
 export function readReportTargets() {
   let saved: Record<string, unknown> = {};
@@ -9,9 +10,18 @@ export function readReportTargets() {
     const number = Number(value);
     return Number.isFinite(number) && number > 0 ? number : fallback;
   };
+  const percent = (value: unknown, fallback: number) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 && number <= 100 ? number : fallback;
+  };
   return {
-    monthlySalesTarget: positive(saved.monthlySalesTarget, 15),
-    warehousePickingLeadTimeTarget: positive(saved.warehousePickingLeadTimeTarget, 3),
+    warehouseCompletionTargetPercent: percent(saved.warehouseCompletionTargetPercent, DEFAULT_KPI_TARGETS.warehouseCompletionTargetPercent),
+    warehousePickingLeadTimeTarget: positive(saved.warehousePickingLeadTimeTarget, DEFAULT_KPI_TARGETS.warehousePickingLeadTimeTarget),
+    monthlySalesTarget: positive(saved.monthlySalesTarget, DEFAULT_KPI_TARGETS.monthlySalesTarget),
+    averageSalesPerBillTargetBaht: positive(saved.averageSalesPerBillTargetBaht, DEFAULT_KPI_TARGETS.averageSalesPerBillTargetBaht),
+    deliveryCompletionTargetPercent: percent(saved.deliveryCompletionTargetPercent, DEFAULT_KPI_TARGETS.deliveryCompletionTargetPercent),
+    salesToLoadedLeadTimeTargetDays: positive(saved.salesToLoadedLeadTimeTargetDays, DEFAULT_KPI_TARGETS.salesToLoadedLeadTimeTargetDays),
   };
 }
 

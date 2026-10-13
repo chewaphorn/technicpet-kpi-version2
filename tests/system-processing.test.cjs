@@ -43,6 +43,15 @@ test('warehouse aggregation does not source its opening date from the sales repo
   );
   assert.equal(docs[0].salesOrderDate, undefined);
 });
+test('department date filters retain rows when the primary date is missing or invalid but a valid own-department date exists', () => {
+  const warehouseDoc = { docNo: 'BK-FALLBACK', customer: 'Customer', date: '-', receivedBookingDate: '2026-08-15', status: 'pending' };
+  const deliveryTrip = { docNo: 'BK-FALLBACK', plannedDate: '-', orderDate: '2026-08-15', status: 'in_transit' };
+  assert.equal(api.getWarehouseReportDate(warehouseDoc), '2026-08-15');
+  assert.equal(api.getWarehouseReportDate({ ...warehouseDoc, date: '2026-08-16' }), '2026-08-15');
+  assert.equal(api.filterWarehouseDocs([warehouseDoc], { fromDate: '2026-08-15', toDate: '2026-08-15' }).length, 1);
+  assert.equal(api.getDeliveryReportDate(deliveryTrip), '2026-08-15');
+  assert.equal(api.filterDeliveryTrips([deliveryTrip], { fromDate: '2026-08-15', toDate: '2026-08-15' }).length, 1);
+});
 test('warehouse metrics summarize filtered records by booking date', () => {
   const metrics = api.calculateWarehouseMetrics([
     { docNo: 'BK1', date: '2026-08-10', receivedBookingDate: '2026-08-10', status: 'pending', transferredToDelivery: false },

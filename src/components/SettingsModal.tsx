@@ -26,6 +26,8 @@ import { AuthUser, UserRole, AuthorizedUserRecord } from '../types';
 
 import { getRoleInfo } from '../lib/firebase';
 import { saveKpiTargets } from '../lib/kpiSettings';
+import { readReportTargets } from '../hooks/useReportTargets';
+import { DEFAULT_KPI_TARGETS } from '../utils/kpiTargets';
 import { 
   getAuthorizedUsers, 
   saveAuthorizedUser, 
@@ -62,6 +64,42 @@ interface SystemUserItem {
   };
 }
 
+interface KpiTargetFieldProps {
+  id: string;
+  label: string;
+  hint: string;
+  unit: string;
+  value: number;
+  onChange: (value: number) => void;
+  icon: React.ReactNode;
+  min: number;
+  max?: number;
+  step?: number;
+}
+
+const KpiTargetField: React.FC<KpiTargetFieldProps> = ({ id, label, hint, unit, value, onChange, icon, min, max, step = 1 }) => (
+  <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-2">
+    <label htmlFor={id} className="flex items-center gap-1.5 text-sm font-bold text-slate-800">
+      <span className="text-blue-600">{icon}</span>
+      {label}
+    </label>
+    <p className="text-[11px] text-slate-500 leading-relaxed">{hint}</p>
+    <div className="flex items-center gap-3">
+      <input
+        id={id}
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="w-32 px-3 py-2 border border-slate-300 rounded-xl text-slate-900 font-extrabold text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
+      />
+      <span className="text-xs font-medium text-slate-500">{unit}</span>
+    </div>
+  </div>
+);
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({ 
   isOpen, 
   onClose,
@@ -73,11 +111,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [activeTab, setActiveTab] = useState<'targets' | 'access' | 'general'>('targets');
 
   // Tab 1: KPI Goal Settings States
-  const [kpiTargetDays, setKpiTargetDays] = useState(3);
-  const [slaTargetPercent, setSlaTargetPercent] = useState(95);
-  const [utilizationTarget, setUtilizationTarget] = useState(85);
-  const [warehousePickingLeadTimeTarget, setWarehousePickingLeadTimeTarget] = useState(3);
-  const [monthlySalesTarget, setMonthlySalesTarget] = useState(15.0);
+  const [warehouseCompletionTargetPercent, setWarehouseCompletionTargetPercent] = useState(DEFAULT_KPI_TARGETS.warehouseCompletionTargetPercent);
+  const [warehousePickingLeadTimeTarget, setWarehousePickingLeadTimeTarget] = useState(DEFAULT_KPI_TARGETS.warehousePickingLeadTimeTarget);
+  const [monthlySalesTarget, setMonthlySalesTarget] = useState(DEFAULT_KPI_TARGETS.monthlySalesTarget);
+  const [averageSalesPerBillTargetBaht, setAverageSalesPerBillTargetBaht] = useState(DEFAULT_KPI_TARGETS.averageSalesPerBillTargetBaht);
+  const [deliveryCompletionTargetPercent, setDeliveryCompletionTargetPercent] = useState(DEFAULT_KPI_TARGETS.deliveryCompletionTargetPercent);
+  const [salesToLoadedLeadTimeTargetDays, setSalesToLoadedLeadTimeTargetDays] = useState(DEFAULT_KPI_TARGETS.salesToLoadedLeadTimeTargetDays);
  
 
   // Tab 2: User Account & Access Control States
@@ -106,25 +145,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   // The report cache is populated from the shared Firestore settings.
   useEffect(() => {
-    try {
-      const savedTargets = localStorage.getItem('technicpet_kpi_targets');
-      if (savedTargets) {
-        const parsed = JSON.parse(savedTargets);
-        if (parsed.kpiTargetDays) setKpiTargetDays(parsed.kpiTargetDays);
-        if (parsed.slaTargetPercent != null) setSlaTargetPercent(parsed.slaTargetPercent);
-        if (parsed.utilizationTarget != null) setUtilizationTarget(parsed.utilizationTarget);
-        if (parsed.warehousePickingLeadTimeTarget) {
-          setWarehousePickingLeadTimeTarget(parsed.warehousePickingLeadTimeTarget);
-        } else if (parsed.warehouseAccuracyTarget && parsed.warehouseAccuracyTarget <= 14) {
-          // Migrate only valid legacy day values; the old 99% accuracy default
-          // must not become a 99-day picking target.
-          setWarehousePickingLeadTimeTarget(parsed.warehouseAccuracyTarget);
-        }
-        if (parsed.monthlySalesTarget) setMonthlySalesTarget(parsed.monthlySalesTarget);
-      }
-    } catch (e) {
-      console.warn('Error loading KPI settings from localStorage', e);
-    }
+    const targets = readReportTargets();
+    setWarehouseCompletionTargetPercent(targets.warehouseCompletionTargetPercent);
+    setWarehousePickingLeadTimeTarget(targets.warehousePickingLeadTimeTarget);
+    setMonthlySalesTarget(targets.monthlySalesTarget);
+    setAverageSalesPerBillTargetBaht(targets.averageSalesPerBillTargetBaht);
+    setDeliveryCompletionTargetPercent(targets.deliveryCompletionTargetPercent);
+    setSalesToLoadedLeadTimeTargetDays(targets.salesToLoadedLeadTimeTargetDays);
 
     if (!isOpen || currentUser?.role !== 'admin') {
       setUsersList([]);
@@ -182,14 +209,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
     try {
       const targetsToSave = {
-        kpiTargetDays,
-        slaTargetPercent,
-        utilizationTarget,
+        warehouseCompletionTargetPercent,
         warehousePickingLeadTimeTarget,
-        monthlySalesTarget
+        monthlySalesTarget,
+        averageSalesPerBillTargetBaht,
+        deliveryCompletionTargetPercent,
+        salesToLoadedLeadTimeTargetDays,
       };
       await saveKpiTargets(targetsToSave);
-      localStorage.removeItem('warehouseAccuracyTarget');
     } catch (error) {
       setSettingsError(error instanceof Error ? error.message : 'ไม่สามารถบันทึกการตั้งค่าได้');
       return;
@@ -455,150 +482,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <Target className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
                 <div>
                   <h4 className="font-bold text-slate-900 text-xs">
-                    กำหนดเกณฑ์เป้าหมายมาตรฐานสำหรับการประเมิน KPI ประจำไตรมาส
+                    กำหนดเป้าหมาย KPI แยกตามแผนก
                   </h4>
                   <p className="text-slate-600 text-[11px] mt-0.5 leading-relaxed">
-                    ค่าเป้าหมายที่ระบุจะถูกนำไปคำนวณและเปรียบเทียบในหน้า <strong>Executive Overview</strong> และหน้ารายงานประจำฝ่าย (ฝ่ายขาย, คลังสินค้า, การจัดส่ง)
+                    เป้าหมายยอดขายรายเดือนและยอดเฉลี่ยต่อบิลเป็นคนละค่า · ระยะเวลาคลังนับถึงจัดของเสร็จ ส่วนระยะเวลาขนส่งนับถึงโหลดเสร็จ โดยเริ่มจากวันที่เปิดบิลขายทั้งคู่
                   </p>
                 </div>
               </div>
 
-              {/* Main KPI Targets Grid */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5">
-                    <Sliders className="w-3.5 h-3.5 text-blue-600" />
-                    <span>เกณฑ์เป้าหมาย KPI หลัก (KPI Thresholds)</span>
-                  </h4>
-                  <span className="text-[11px] text-slate-500 font-medium">เกณฑ์มาตรฐานสากล</span>
-                </div>
+              <div className="space-y-5">
+                <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                  <Sliders className="w-3.5 h-3.5 text-blue-600" />
+                  เกณฑ์เป้าหมายรายแผนก (Department KPI Targets)
+                </h4>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  
-                  {/* Target 1: ระยะเวลาจัดส่ง */}
-                  <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-2 hover:border-blue-300 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <label className="text-slate-700 font-bold flex items-center gap-1.5">
-                        <Clock className="w-4 h-4 text-blue-600" />
-                        <span>เป้าหมายระยะเวลาจัดส่ง (วัน)</span>
-                      </label>
-                      <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-bold text-[11px]">
-                        Lead Time
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="number"
-                        min="1"
-                        max="14"
-                        step="0.5"
-                        value={kpiTargetDays}
-                        onChange={(e) => setKpiTargetDays(Number(e.target.value))}
-                        className="w-28 px-3 py-2 border border-slate-300 rounded-xl text-slate-900 font-extrabold text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
-                      />
-                      <span className="text-slate-500 font-medium">วันทำการ (ค่ามาตรฐาน 3 วัน)</span>
-                    </div>
+                <section className="space-y-2" aria-label="เป้าหมายแผนกคลังสินค้า">
+                  <h5 className="text-sm font-bold text-emerald-800">แผนกคลังสินค้า</h5>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <KpiTargetField id="target-warehouse-completion" label="อัตราการจัดสำเร็จ (%)" hint="บิลที่จัดเสร็จ ÷ บิลคลังทั้งหมด" unit="เปอร์เซ็นต์" value={warehouseCompletionTargetPercent} onChange={setWarehouseCompletionTargetPercent} icon={<CheckCircle2 className="w-4 h-4" />} min={0} max={100} step={0.1} />
+                    <KpiTargetField id="target-warehouse-picking-days" label="ระยะเวลาจัดของ (Picking Lead Time)" hint="เฉลี่ยจากวันที่เปิดบิลขายถึงวันที่จัดของเสร็จ" unit="วัน" value={warehousePickingLeadTimeTarget} onChange={setWarehousePickingLeadTimeTarget} icon={<Package className="w-4 h-4" />} min={0.1} step={0.1} />
                   </div>
+                </section>
 
-                  {/* Target 2: On-Time Delivery % */}
-                  <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-2 hover:border-blue-300 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <label className="text-slate-700 font-bold flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        <span>เป้าหมาย On-Time Delivery (%)</span>
-                      </label>
-                      <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold text-[11px]">
-                        SLA Target
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="number"
-                        min="50"
-                        max="100"
-                        value={slaTargetPercent}
-                        onChange={(e) => setSlaTargetPercent(Number(e.target.value))}
-                        className="w-28 px-3 py-2 border border-slate-300 rounded-xl text-slate-900 font-extrabold text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
-                      />
-                      <span className="text-slate-500 font-medium">% ความตรงต่อเวลา</span>
-                    </div>
+                <section className="space-y-2" aria-label="เป้าหมายแผนกขาย">
+                  <h5 className="text-sm font-bold text-blue-800">แผนกขาย</h5>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <KpiTargetField id="target-sales-monthly" label="เป้าหมายยอดขายรายเดือน (ล้านบาท)" hint="ยอดขายรวมต่อเดือน" unit="ล้านบาท" value={monthlySalesTarget} onChange={setMonthlySalesTarget} icon={<TrendingUp className="w-4 h-4" />} min={0.1} step={0.1} />
+                    <KpiTargetField id="target-sales-average-bill" label="เป้าหมายยอดขายเฉลี่ยต่อบิล (บาท)" hint="ยอดขายรวม ÷ จำนวนบิลขาย" unit="บาทต่อบิล" value={averageSalesPerBillTargetBaht} onChange={setAverageSalesPerBillTargetBaht} icon={<TrendingUp className="w-4 h-4" />} min={1} />
                   </div>
+                </section>
 
-                  {/* Target 3: Fleet Utilization % */}
-                  <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-2 hover:border-blue-300 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <label className="text-slate-700 font-bold flex items-center gap-1.5">
-                        <Truck className="w-4 h-4 text-indigo-600" />
-                        <span>ประสิทธิภาพใช้รถ (Fleet Utilization %)</span>
-                      </label>
-                      <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-bold text-[11px]">
-                        Efficiency
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="number"
-                        min="50"
-                        max="100"
-                        value={utilizationTarget}
-                        onChange={(e) => setUtilizationTarget(Number(e.target.value))}
-                        className="w-28 px-3 py-2 border border-slate-300 rounded-xl text-slate-900 font-extrabold text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
-                      />
-                      <span className="text-slate-500 font-medium">% อัตราการบรรทุกสินค้ารถ</span>
-                    </div>
+                <section className="space-y-2" aria-label="เป้าหมายแผนกขนส่ง">
+                  <h5 className="text-sm font-bold text-purple-800">แผนกขนส่ง</h5>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <KpiTargetField id="target-delivery-completion" label="อัตราส่งสำเร็จ (%)" hint="บิลที่ส่งสำเร็จ ÷ บิลขนส่งทั้งหมด" unit="เปอร์เซ็นต์" value={deliveryCompletionTargetPercent} onChange={setDeliveryCompletionTargetPercent} icon={<Truck className="w-4 h-4" />} min={0} max={100} step={0.1} />
+                    <KpiTargetField id="target-delivery-sales-to-loaded-days" label="ระยะเวลาจัดส่ง (วัน)" hint="เฉลี่ยจากวันที่เปิดบิลขายถึงวันที่โหลดเสร็จ" unit="วัน" value={salesToLoadedLeadTimeTargetDays} onChange={setSalesToLoadedLeadTimeTargetDays} icon={<Clock className="w-4 h-4" />} min={0.1} step={0.1} />
                   </div>
-
-                  {/* Target 4: Warehouse Picking Lead Time */}
-                  <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-2 hover:border-blue-300 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <label className="text-slate-700 font-bold flex items-center gap-1.5">
-                        <Package className="w-4 h-4 text-amber-600" />
-                        <span>ระยะเวลาจัดของ (Picking Lead Time)</span>
-                      </label>
-                      <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 font-bold text-[11px]">
-                        Picking Lead Time
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="number"
-                        min="1"
-                        max="14"
-                        step="0.5"
-                        value={warehousePickingLeadTimeTarget}
-                        onChange={(e) => setWarehousePickingLeadTimeTarget(Number(e.target.value))}
-                        className="w-28 px-3 py-2 border border-slate-300 rounded-xl text-slate-900 font-extrabold text-sm focus:ring-2 focus:ring-amber-500/20 focus:border-amber-600"
-                      />
-                      <span className="text-slate-500 font-medium">วันทำการ (ค่ามาตรฐาน 3 วัน)</span>
-                    </div>
-                  </div>
-
-                  {/* Target 5: Monthly Sales Target */}
-                  <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-2 hover:border-blue-300 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <label className="text-slate-700 font-bold flex items-center gap-1.5">
-                        <TrendingUp className="w-4 h-4 text-teal-600" />
-                        <span>เป้าหมายยอดขายรายเดือน (ล้านบาท)</span>
-                      </label>
-                      <span className="px-2 py-0.5 rounded bg-teal-50 text-teal-700 font-bold text-[11px]">
-                        Revenue Goal
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="number"
-                        min="1"
-                        max="100"
-                        step="0.5"
-                        value={monthlySalesTarget}
-                        onChange={(e) => setMonthlySalesTarget(Number(e.target.value))}
-                        className="w-28 px-3 py-2 border border-slate-300 rounded-xl text-slate-900 font-extrabold text-sm focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600"
-                      />
-                      <span className="text-slate-500 font-medium">ล้านบาท (THB Million)</span>
-                    </div>
-                  </div>
-
-                </div>
+                </section>
               </div>
 
             </div>
@@ -894,7 +814,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 divide-y divide-slate-200/80 space-y-2 text-slate-600">
                   <div className="flex items-center justify-between pb-2">
                     <span className="font-medium">ชื่อองค์กร:</span>
-                    <strong className="text-slate-900 font-bold">Technic Pet Co., Ltd. (Enterprise Logistics)</strong>
+                    <strong className="text-slate-900 font-bold">Technic Pet Co., Ltd.</strong>
                   </div>
                   <div className="flex items-center justify-between py-2">
                     <span className="font-medium">ฐานข้อมูล & เซิร์ฟเวอร์:</span>

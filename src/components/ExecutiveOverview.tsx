@@ -1,9 +1,12 @@
 import { BookingTrackingSection } from './BookingTrackingSection';
-import { aggregateWarehouseDocs, filterWarehouseDocs, calculateWarehouseMetrics, isWarehouseDocCompleted, aggregateDeliveryTrips, filterDeliveryTrips, calculateDeliveryMetrics, isCompletedTrip } from '../utils/logisticsReportMetrics';
+import { buildBookingTracking, filterBookingTracking, summarizeBookingLeadTime } from '../utils/bookingTracking';
+import { aggregateWarehouseDocs, filterWarehouseDocs, calculateWarehouseMetrics, isWarehouseDocCompleted, aggregateDeliveryTrips, filterDeliveryTrips, calculateDeliveryMetrics, isCompletedTrip, getWarehouseReportDate, getDeliveryReportDate } from '../utils/logisticsReportMetrics';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { normalizeDateToISO, getMinMaxDates } from '../utils/dateUtils';
 import { calculateDaysDiff } from '../utils/dataProcessor';
 import { calculateSalesTotals, filterSalesOrders } from '../utils/salesReportMetrics';
+import { buildDepartmentGoalGroups, formatGoalValue, type DepartmentGoalGroup, type GoalMetric } from '../utils/departmentGoals';
+import { useReportTargets } from '../hooks/useReportTargets';
 import { 
   KPIStats, 
   MonthlyDeliveryTrend, 
@@ -45,7 +48,6 @@ import {
   CalendarClock,
   Layers,
   Zap,
-  Target,
   FileSpreadsheet,
   Upload,
   RefreshCw
@@ -105,6 +107,34 @@ type ExecutiveKpiTargets = {
   pickingLeadTimeDays: number;
 };
 
+const GoalBulletChart: React.FC<{ metric: GoalMetric; color: string }> = ({ metric, color }) => {
+  const { actual, target, unit, direction } = metric;
+  const scale = unit === 'percent' ? 100 : Math.max(actual ?? 0, target, 1) * 1.1;
+  const actualWidth = actual === null ? 0 : Math.max(0, Math.min(100, (actual / scale) * 100));
+  const targetPosition = Math.max(0, Math.min(100, (target / scale) * 100));
+  const met = actual !== null && (direction === 'higher' ? actual >= target : actual <= target);
+
+  return (
+    <div className="space-y-1.5" data-testid={`overview-goal-${metric.id}`}>
+      <p className="text-xs font-bold text-slate-800">{metric.label}</p>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 text-xs">
+        <span className="font-extrabold text-slate-900">ผลจริง {actual === null ? '—' : formatGoalValue(actual, unit)}</span>
+        <span className="font-semibold text-slate-600">เป้าหมาย {direction === 'higher' ? '≥' : '≤'} {formatGoalValue(target, unit)}</span>
+      </div>
+      <div className="relative h-3 rounded-full bg-slate-100" role="img" aria-label={`${metric.label}: ผลจริง ${actual === null ? 'ไม่มีข้อมูล' : formatGoalValue(actual, unit)}, เป้าหมาย ${direction === 'higher' ? 'อย่างน้อย' : 'ไม่เกิน'} ${formatGoalValue(target, unit)}`}>
+        <div className="h-full rounded-full" style={{ width: `${actualWidth}%`, backgroundColor: color }} />
+        <div className="absolute top-[-3px] h-[18px] w-0.5 rounded-full bg-slate-800" style={{ left: `${targetPosition}%` }} title="เป้าหมาย" />
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-x-2 text-[11px]">
+        <span className="text-slate-500">{metric.note}</span>
+        <span className={actual === null ? 'text-slate-500' : met ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
+          {actual === null ? 'ไม่มีข้อมูล' : met ? 'ถึงเป้าหมาย' : direction === 'higher' ? 'ต่ำกว่าเป้าหมาย' : 'เกินเป้าหมาย'}
+        </span>
+      </div>
+    </div>
+  );
+};
+
 const formatTrendRevenue = (value: number): string => {
   if (!Number.isFinite(value) || value === 0) return '฿0';
   if (Math.abs(value) >= 1_000_000) return `฿${(value / 1_000_000).toFixed(2)}M`;
@@ -145,14 +175,14 @@ const DepartmentSectionHeader: React.FC<DepartmentSectionHeaderProps> = ({
   screenId,
   onNavigateScreen
 }) => (
-  <div id={id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1 border-b border-slate-200/80">
-    <div className="flex items-center gap-3">
+  <div id={id} className="flex flex-wrap items-center justify-between gap-3 pb-1 border-b border-slate-200/80">
+    <div className="flex items-center gap-3 min-w-0 flex-1">
       <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${iconBg} ${iconColor} border ${iconBorder} shadow-2xs shrink-0`}>
         {icon}
       </div>
-      <div>
+      <div className="min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <h3 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+          <h3 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight break-words">
             {title}
           </h3>
           <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
@@ -170,7 +200,7 @@ const DepartmentSectionHeader: React.FC<DepartmentSectionHeaderProps> = ({
         type="button"
         id={`btn-nav-detail-${screenId}`}
         onClick={() => onNavigateScreen(screenId)}
-        className="self-start sm:self-auto inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50/90 hover:bg-blue-100 border border-blue-200/80 hover:border-blue-300 transition-all cursor-pointer shadow-2xs group"
+        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50/90 hover:bg-blue-100 border border-blue-200/80 hover:border-blue-300 transition-all cursor-pointer shadow-2xs group"
       >
         <span>ดูรายงานละเอียด</span>
         <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform text-blue-600" />
@@ -230,17 +260,17 @@ const ExecutiveKPICard: React.FC<ExecutiveKPICardProps> = ({
     >
       <div>
         {/* Top Header: Icon + Title + Status Badge */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
             <div className={`w-8 h-8 rounded-xl ${iconBgClass} ${iconColorClass} flex items-center justify-center shrink-0`}>
               {icon}
             </div>
-            <span className="text-xs font-semibold text-slate-700 truncate" title={title}>
+            <span className="text-xs font-semibold text-slate-700 break-words" title={title}>
               {title}
             </span>
           </div>
 
-          <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border shrink-0 whitespace-nowrap ${badgeStyles}`}>
+          <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border max-w-full break-words ${badgeStyles}`}>
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotStyles}`} />
             {badge.label}
           </span>
@@ -248,7 +278,7 @@ const ExecutiveKPICard: React.FC<ExecutiveKPICardProps> = ({
 
         {/* Big Bold Stat Value */}
         <div className="mt-3.5 mb-2">
-          <div className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight tabular-nums">
+          <div className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight tabular-nums break-words">
             {value}
           </div>
         </div>
@@ -256,9 +286,9 @@ const ExecutiveKPICard: React.FC<ExecutiveKPICardProps> = ({
 
       {/* Footer / Context Line */}
       <div className="pt-2.5 mt-1 border-t border-slate-100 flex items-center justify-between gap-2 text-[11.5px] font-medium text-slate-500">
-        <div className="flex items-center gap-1.5 min-w-0 truncate">
+        <div className="flex items-start gap-1.5 min-w-0 flex-1">
           {noteIcon && <span className="shrink-0">{noteIcon}</span>}
-          <span className="truncate">{note}</span>
+          <span className="break-words">{note}</span>
         </div>
         <ArrowRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all shrink-0" />
       </div>
@@ -272,7 +302,6 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
   onSearchDoc,
   warehouseDocs = [],
   deliveryTrips = [],
-  salesReps = [],
   detailedOrders = [],
   salesSummary,
   warehouseSummary,
@@ -285,12 +314,13 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
   isSyncingAll = false,
   syncErrors,
 }) => {
+  const reportTargets = useReportTargets();
   // Use the union of all department dates so the overview never limits the
   // warehouse or delivery reports to the sales department's date range.
   const overviewDateCandidates = useMemo(() => [
     ...detailedOrders.map((o) => o.date),
-    ...warehouseDocs.map((doc) => doc.date),
-    ...deliveryTrips.map((trip) => trip.plannedDate || trip.orderDate || trip.handoffDate || trip.loadedDate),
+    ...warehouseDocs.map(getWarehouseReportDate),
+    ...deliveryTrips.map(getDeliveryReportDate),
   ], [detailedOrders, warehouseDocs, deliveryTrips]);
   const { min: autoMinDate, max: autoMaxDate } = useMemo(() => {
     return getMinMaxDates(overviewDateCandidates, '', '');
@@ -313,6 +343,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
   const [endDate, setEndDate] = useState(() => autoMaxDate);
   const [appliedStartDate, setAppliedStartDate] = useState(() => defaultStartDate);
   const [appliedEndDate, setAppliedEndDate] = useState(() => autoMaxDate);
+  const hasAppliedFilter = useRef(false);
 
   // Department Filter (Default to 'ทั้งหมด' to view all departments together in Executive Dashboard)
   const [selectedDept, setSelectedDept] = useState('ทั้งหมด');
@@ -323,54 +354,23 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(() => `${formatDisplayDate(defaultStartDate)} - ${formatDisplayDate(autoMaxDate)}`);
-  const [kpiTargets, setKpiTargets] = useState<ExecutiveKpiTargets>({
-    deliveryLeadTimeDays: 3,
-    onTimeDeliveryPercent: 95,
-    pickingLeadTimeDays: 3,
-  });
-
-  useEffect(() => {
-    const loadKpiTargets = () => {
-      try {
-        const savedTargets = localStorage.getItem('technicpet_kpi_targets');
-        const parsed = savedTargets ? JSON.parse(savedTargets) : {};
-        const readPositive = (value: unknown, fallback: number) => {
-          const numeric = Number(value);
-          return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
-        };
-        const readPercent = (value: unknown, fallback: number) => {
-          const numeric = Number(value);
-          return Number.isFinite(numeric) && numeric >= 0 && numeric <= 100 ? numeric : fallback;
-        };
-        setKpiTargets({
-          deliveryLeadTimeDays: readPositive(parsed.kpiTargetDays, 3),
-          onTimeDeliveryPercent: readPercent(parsed.slaTargetPercent, 95),
-          pickingLeadTimeDays: readPositive(parsed.warehousePickingLeadTimeTarget, 3),
-        });
-      } catch {
-        // Keep the standard targets when local settings are unavailable.
-      }
-    };
-
-    loadKpiTargets();
-    window.addEventListener('storage', loadKpiTargets);
-    window.addEventListener('technicpet:kpi-targets-updated', loadKpiTargets);
-    return () => {
-      window.removeEventListener('storage', loadKpiTargets);
-      window.removeEventListener('technicpet:kpi-targets-updated', loadKpiTargets);
-    };
-  }, []);
+  const kpiTargets = useMemo<ExecutiveKpiTargets>(() => ({
+    deliveryLeadTimeDays: reportTargets.salesToLoadedLeadTimeTargetDays,
+    onTimeDeliveryPercent: reportTargets.deliveryCompletionTargetPercent,
+    pickingLeadTimeDays: reportTargets.warehousePickingLeadTimeTarget,
+  }), [reportTargets.salesToLoadedLeadTimeTargetDays, reportTargets.deliveryCompletionTargetPercent, reportTargets.warehousePickingLeadTimeTarget]);
 
   // Auto-sync when any department dataset updates
   useEffect(() => {
     const hasDepartmentData = detailedOrders.length > 0 || warehouseDocs.length > 0 || deliveryTrips.length > 0;
-    if (hasDepartmentData && autoMinDate && autoMaxDate) {
+    if (hasDepartmentData && autoMinDate && autoMaxDate && !hasAppliedFilter.current) {
       setStartDate(defaultStartDate);
       setEndDate(autoMaxDate);
       setAppliedStartDate(defaultStartDate);
       setAppliedEndDate(autoMaxDate);
       setLastUpdated(`${formatDisplayDate(defaultStartDate)} - ${formatDisplayDate(autoMaxDate)}`);
     } else if (!hasDepartmentData) {
+      hasAppliedFilter.current = false;
       setStartDate('');
       setEndDate('');
       setAppliedStartDate('');
@@ -401,6 +401,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
 
   // Apply Filter Action
   const handleApplyFilter = () => {
+    hasAppliedFilter.current = true;
     setIsApplying(true);
     setAppliedStartDate(startDate);
     setAppliedEndDate(endDate);
@@ -415,6 +416,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
 
   // Reset Filters to default
   const handleResetFilter = () => {
+    hasAppliedFilter.current = false;
     setStartDate(defaultStartDate);
     setEndDate(autoMaxDate);
     setSelectedDept('ทั้งหมด');
@@ -450,6 +452,8 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
   const overviewWarehouseDocs = useMemo(() => filterWarehouseDocs(aggregatedWarehouseDocs, {fromDate: appliedStartDate, toDate: appliedEndDate}), [aggregatedWarehouseDocs, appliedStartDate, appliedEndDate]);
   const groupedDeliveryTrips = useMemo(() => aggregateDeliveryTrips(deliveryTrips, detailedOrders), [deliveryTrips, detailedOrders]);
   const overviewDeliveryTrips = useMemo(() => filterDeliveryTrips(groupedDeliveryTrips, {fromDate: appliedStartDate, toDate: appliedEndDate}), [groupedDeliveryTrips, appliedStartDate, appliedEndDate]);
+  const bookingRows = useMemo(() => buildBookingTracking(detailedOrders, warehouseDocs, deliveryTrips), [detailedOrders, warehouseDocs, deliveryTrips]);
+  const overviewBookingRows = useMemo(() => filterBookingTracking(bookingRows, '', appliedStartDate, appliedEndDate), [bookingRows, appliedStartDate, appliedEndDate]);
 
   // Build the trend from the exact rows used by the department reports. The
   // old trendData prop is kept only as a backwards-compatible fallback for
@@ -796,8 +800,13 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
     }));
   }, [trendData, appliedStartDate, appliedEndDate]);
 
-  const hasRawTrendRows = overviewOrders.length > 0 || overviewWarehouseDocs.length > 0 || overviewDeliveryTrips.length > 0;
+  // A selected period with no rows must stay empty, not revive stale legacy trend data.
+  const hasRawTrendRows = detailedOrders.length > 0 || warehouseDocs.length > 0 || deliveryTrips.length > 0;
   const filteredTrendData: ExecutiveTrendPoint[] = hasRawTrendRows ? computedTrendData : legacyTrendData;
+
+  // One booking contributes once, only after all its trips have a valid load date.
+  // Match the booking tracker and use the sales opening date for the period.
+  const salesToLoadedAverage = useMemo(() => summarizeBookingLeadTime(overviewBookingRows), [overviewBookingRows]);
 
   // Departmental Metrics aggregated from real props and summary data
   const departmentMetrics = useMemo(() => {
@@ -897,16 +906,16 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
     kpis,
   ]);
 
-  // Warehouse Documents for table preview if Department is 'คลังสินค้า'
-  const filteredWarehouseDocs = useMemo(() => {
-    return overviewWarehouseDocs;
-  }, [overviewWarehouseDocs]);
-
-  // Delivery Trips for table preview if Department is 'การจัดส่ง'
-  const filteredDeliveryTrips = useMemo(() => {
-    return overviewDeliveryTrips;
-  }, [overviewDeliveryTrips]);
-
+  const departmentGoalGroups = useMemo<DepartmentGoalGroup[]>(() => buildDepartmentGoalGroups({
+    orders: overviewOrders,
+    warehouseDocs: overviewWarehouseDocs,
+    deliveryTrips: overviewDeliveryTrips,
+    bookingRows: overviewBookingRows,
+    startDate: appliedStartDate,
+    endDate: appliedEndDate,
+    targets: reportTargets,
+    department: appliedDept === 'ฝ่ายขาย' ? 'sales' : appliedDept === 'คลังสินค้า' ? 'warehouse' : appliedDept === 'การจัดส่ง' ? 'delivery' : 'all',
+  }), [appliedDept, overviewOrders, overviewWarehouseDocs, overviewDeliveryTrips, overviewBookingRows, appliedStartDate, appliedEndDate, reportTargets]);
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchInput.trim()) {
@@ -1266,7 +1275,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
                 icon={<CheckCircle2 className="w-4 h-4" />}
                 iconBgClass="bg-emerald-50"
                 iconColorClass="text-emerald-700"
-                note={`ยอดเฉลี่ยต่อบิล ฿${departmentMetrics.sales.averageTicket.toLocaleString()}`}
+                note={`ยอดเฉลี่ยต่อบิล ฿${departmentMetrics.sales.averageTicket.toLocaleString()} / เป้าหมาย ฿${reportTargets.averageSalesPerBillTargetBaht.toLocaleString()}`}
                 noteIcon={<Receipt className="w-3.5 h-3.5 text-blue-600" />}
                 onClick={() => onNavigateScreen?.('sales')}
               />
@@ -1279,7 +1288,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
                 icon={<Receipt className="w-4 h-4" />}
                 iconBgClass="bg-blue-50"
                 iconColorClass="text-blue-700"
-                note={`จาก ${departmentMetrics.sales.totalOrdersCount} บิลในช่วงที่เลือก`}
+                note={`จาก ${departmentMetrics.sales.totalOrdersCount} บิลในช่วงที่เลือก · เป้าหมายรายเดือน ฿${reportTargets.monthlySalesTarget.toLocaleString()} ล้าน`}
                 noteIcon={<Calendar className="w-3.5 h-3.5 text-blue-600" />}
                 onClick={() => onNavigateScreen?.('sales')}
               />
@@ -1292,7 +1301,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
                 icon={<TrendingUp className="w-4 h-4" />}
                 iconBgClass="bg-indigo-50"
                 iconColorClass="text-indigo-700"
-                note="ยอดขายรวม ÷ จำนวนบิลขายในช่วงที่เลือก"
+                note={`ยอดขายรวม ÷ จำนวนบิลขาย · เป้าหมาย ≥ ฿${reportTargets.averageSalesPerBillTargetBaht.toLocaleString()}`}
                 noteIcon={<CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
                 onClick={() => onNavigateScreen?.('sales')}
               />
@@ -1338,7 +1347,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
                 icon={<CheckCircle2 className="w-4 h-4" />}
                 iconBgClass="bg-emerald-50"
                 iconColorClass="text-emerald-700"
-                note={`จาก ${departmentMetrics.warehouse.totalDocs.toLocaleString()} ใบรับเข้า`}
+                note={`จาก ${departmentMetrics.warehouse.totalDocs.toLocaleString()} ใบรับเข้า · เป้าหมาย ≥ ${reportTargets.warehouseCompletionTargetPercent}%`}
                 noteIcon={<CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
                 onClick={() => onNavigateScreen?.('warehouse')}
               />
@@ -1397,7 +1406,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
                 icon={<CheckCircle2 className="w-4 h-4" />}
                 iconBgClass="bg-emerald-50"
                 iconColorClass="text-emerald-700"
-                note="โหลดสินค้าและส่งต่อฝ่ายขนส่งเรียบร้อยแล้ว"
+                note={`โหลดสินค้าและส่งต่อฝ่ายขนส่งเรียบร้อยแล้ว · เป้าหมาย ≥ ${reportTargets.deliveryCompletionTargetPercent}%`}
                 noteIcon={<CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
                 onClick={() => onNavigateScreen?.('delivery')}
               />
@@ -1422,96 +1431,31 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
         )}
       </div>
 
-      {/* Separate KPI and sales trend charts. */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
-          <div className="flex flex-col gap-2 mb-4">
+      {/* Actual results and configured goals use independent scales per KPI. */}
+      <div className="grid grid-cols-1 gap-5">
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs" data-testid="overview-department-goals">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
             <div>
-              <h3 className="text-base font-bold text-slate-900">ผลลัพธ์เทียบเป้าหมายรายฝ่าย ({appliedDept})</h3>
-              <p className="text-xs text-slate-500 mt-0.5 font-medium">แสดงผลจริงเทียบเป้าหมายระยะเวลาจัดส่ง, On-Time Delivery และระยะเวลาจัดของจากข้อมูลที่กรอง</p>
+              <h3 className="text-base font-bold text-slate-900">ผลลัพธ์เทียบเป้าหมายรายแผนก ({appliedDept})</h3>
+              <p className="text-xs text-slate-500 mt-0.5 font-medium">แถบสีคือผลจริง ขีดสีเข้มคือเป้าหมาย · ระยะเวลานับจากวันที่เปิดบิลขายถึงขั้นตอนสุดท้ายของแต่ละฝ่าย</p>
             </div>
-            <div className="flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-600">
-              <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 bg-purple-500" />ผลจริงขนส่ง</span>
-              <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 border-t-2 border-dashed border-purple-400" />เป้าหมายขนส่ง</span>
-              <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 bg-emerald-500" />ผลจริงคลัง</span>
-              <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 border-t-2 border-dashed border-emerald-400" />เป้าหมายคลัง</span>
+            <div className="flex items-center gap-3 text-[11px] text-slate-500">
+              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-3 rounded-sm bg-blue-600" />ผลจริง</span>
+              <span className="inline-flex items-center gap-1"><span className="h-4 w-0.5 bg-slate-800" />เป้าหมาย</span>
             </div>
           </div>
-          <div className="space-y-4">
-            {filteredTrendData.length === 0 ? (
-              <div className="h-72 flex flex-col items-center justify-center text-slate-400 gap-2 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
-                <Target className="w-8 h-8 text-slate-300" />
-                <span className="text-xs font-semibold text-slate-500">ไม่มีข้อมูลผลลัพธ์ตามช่วงเวลาที่เลือก</span>
-              </div>
-            ) : (
-              <>
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-bold text-slate-700">On-Time Delivery (%)</span>
-                    <span className="text-[11px] text-slate-500">เป้าหมาย {kpiTargets.onTimeDeliveryPercent}%</span>
-                  </div>
-                  <div className="h-32 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={filteredTrendData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis dataKey="month" tickLine={false} axisLine={{ stroke: '#cbd5e1' }} tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }} />
-                        <YAxis tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 10 }} tickFormatter={(value) => `${Number(value)}%`} domain={[0, 100]} />
-                        <Tooltip
-                          content={({ active, payload, label }) => {
-                            if (!active || !payload || payload.length === 0) return null;
-                            const data = payload[0].payload as ExecutiveTrendPoint;
-                            return (
-                              <div className="bg-slate-900 text-white p-2.5 rounded-lg shadow-lg text-xs space-y-1 border border-slate-800">
-                                <p className="font-bold text-slate-200">ช่วงเวลา {label}</p>
-                                <p className="text-purple-300">ผลจริง: {formatTrendKpi(data.deliveryOtdActual)}</p>
-                                <p className="text-purple-200">เป้าหมาย: {formatTrendKpi(data.deliveryOtdTarget)}</p>
-                              </div>
-                            );
-                          }}
-                        />
-                        <Line type="monotone" dataKey="deliveryOtdActual" name="ผลจริง" stroke="#a855f7" strokeWidth={2} dot={{ fill: '#fff', stroke: '#a855f7', strokeWidth: 2, r: 3 }} connectNulls />
-                        <Line type="monotone" dataKey="deliveryOtdTarget" name="เป้าหมาย" stroke="#c084fc" strokeWidth={2} strokeDasharray="5 5" dot={false} connectNulls />
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  </div>
+          <div className={departmentGoalGroups.length === 1 ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4'}>
+            {departmentGoalGroups.map((group) => (
+              <section key={group.department} className="rounded-xl border border-slate-200 bg-slate-50/60 p-4" aria-label={`เป้าหมาย${group.department}`}>
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: group.color }} />
+                  <h4 className="text-sm font-extrabold text-slate-900">{group.department}</h4>
                 </div>
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-bold text-slate-700">Lead Time (วัน)</span>
-                    <span className="text-[11px] text-slate-500">ขนส่ง {kpiTargets.deliveryLeadTimeDays} วัน · คลัง {kpiTargets.pickingLeadTimeDays} วัน</span>
-                  </div>
-                  <div className="h-32 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={filteredTrendData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis dataKey="month" tickLine={false} axisLine={{ stroke: '#cbd5e1' }} tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }} />
-                        <YAxis tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 10 }} tickFormatter={(value) => `${Number(value)} วัน`} domain={[0, 'auto']} />
-                        <Tooltip
-                          content={({ active, payload, label }) => {
-                            if (!active || !payload || payload.length === 0) return null;
-                            const data = payload[0].payload as ExecutiveTrendPoint;
-                            const formatDays = (value: number | null) => value == null ? '—' : `${value} วัน`;
-                            return (
-                              <div className="bg-slate-900 text-white p-2.5 rounded-lg shadow-lg text-xs space-y-1 border border-slate-800">
-                                <p className="font-bold text-slate-200">ช่วงเวลา {label}</p>
-                                <p className="text-purple-300">ขนส่งผลจริง: {formatDays(data.deliveryLeadTimeActual)}</p>
-                                <p className="text-purple-200">ขนส่งเป้าหมาย: {formatDays(data.deliveryLeadTimeTarget)}</p>
-                                <p className="text-emerald-300">คลังผลจริง: {formatDays(data.pickingLeadTimeActual)}</p>
-                                <p className="text-emerald-200">คลังเป้าหมาย: {formatDays(data.pickingLeadTimeTarget)}</p>
-                              </div>
-                            );
-                          }}
-                        />
-                        <Line type="monotone" dataKey="deliveryLeadTimeActual" name="ขนส่งผลจริง" stroke="#a855f7" strokeWidth={2} dot={{ fill: '#fff', stroke: '#a855f7', strokeWidth: 2, r: 3 }} connectNulls />
-                        <Line type="monotone" dataKey="deliveryLeadTimeTarget" name="ขนส่งเป้าหมาย" stroke="#c084fc" strokeWidth={2} strokeDasharray="5 5" dot={false} connectNulls />
-                        <Line type="monotone" dataKey="pickingLeadTimeActual" name="คลังผลจริง" stroke="#10b981" strokeWidth={2} dot={{ fill: '#fff', stroke: '#10b981', strokeWidth: 2, r: 3 }} connectNulls />
-                        <Line type="monotone" dataKey="pickingLeadTimeTarget" name="คลังเป้าหมาย" stroke="#6ee7b7" strokeWidth={2} strokeDasharray="5 5" dot={false} connectNulls />
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  </div>
+                <div className="space-y-4">
+                  {group.metrics.map((metric) => <GoalBulletChart key={metric.id} metric={metric} color={group.color} />)}
                 </div>
-              </>
-            )}
+              </section>
+            ))}
           </div>
         </div>
 
@@ -1564,6 +1508,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
         </div>
 
         </div>
+        {(appliedDept === 'ทั้งหมด' || appliedDept === 'ฝ่ายขาย') && (
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
           <div className="flex flex-col gap-2 mb-5">
             <div>
@@ -1610,6 +1555,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
             )}
           </div>
         </div>
+        )}
       </div>
 
       {/* Legacy combined chart kept hidden for backwards-compatible markup hooks. */}
@@ -1740,274 +1686,6 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
           )}
         </div>
       </div>
-
-      {/* Dynamic Department-Specific Report Views */}
-      {appliedDept === 'ฝ่ายขาย' && (
-        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-2xs space-y-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Receipt className="w-5 h-5 text-blue-600" />
-              <h3 className="font-bold text-base text-slate-900">
-                สรุปผลงานฝ่ายขายและพนักงานขาย (Sales Department Overview)
-              </h3>
-            </div>
-            {onNavigateScreen && (
-              <button
-                onClick={() => onNavigateScreen('sales')}
-                className="text-xs font-bold text-blue-700 hover:text-blue-900 flex items-center gap-1 cursor-pointer"
-              >
-                <span>ดูรายงานฝ่ายขายเต็มรูปแบบ</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-
-          {salesReps.length === 0 ? (
-            <div className="py-8 text-center text-slate-400 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
-              <p className="font-semibold text-xs text-slate-600">ยังไม่มีข้อมูลพนักงานขายในระบบ</p>
-              <p className="text-[11px] text-slate-400 mt-0.5">นำเข้าข้อมูลคำสั่งซื้อเพื่อดูสถิติรายบุคคล</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {salesReps.slice(0, 3).map((rep, idx) => (
-                <div key={`exec-rep-${rep.id || rep.name || idx}-${idx}`} className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white hover:border-blue-300 transition-all shadow-2xs">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center font-bold text-xs">
-                        {rep.initials}
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-bold text-slate-900">{rep.name}</h4>
-                        <p className="text-[11px] text-slate-500">{rep.role}</p>
-                      </div>
-                    </div>
-                    <span className="text-xs font-extrabold text-blue-900">{rep.salesFormatted}</span>
-                  </div>
-                  <div className="mt-3">
-                    <div className="flex justify-between text-[11px] font-semibold text-slate-600 mb-1">
-                      <span>เป้าหมาย {rep.target}M</span>
-                      <span className="text-emerald-700 font-bold">{rep.completionRate}%</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-blue-600 rounded-full" 
-                        style={{ width: `${Math.min(100, rep.completionRate)}%` }}
-                      />
-                    </div>
-                  </div>
-                  <div className="mt-2 text-[11px] text-slate-500 font-medium flex items-center justify-between">
-                    <span>{rep.deliveryTurnaround}</span>
-                    <span className="text-blue-600 font-bold">ตรงเกณฑ์ 100%</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Recent Orders Preview */}
-          <div className="border border-slate-200 rounded-xl overflow-hidden mt-4">
-            <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-700">รายการใบสั่งขายเด่นล่าสุด (Sales Orders)</span>
-              <span className="text-[11px] font-semibold text-slate-500">แสดง 4 รายการแรก</span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-white text-slate-600 font-bold border-b border-slate-200">
-                  <tr>
-                    <th className="py-2.5 px-4">เลขที่ใบสั่งขาย</th>
-                    <th className="py-2.5 px-4">ชื่อลูกค้า</th>
-                    <th className="py-2.5 px-3 text-right">ยอดรวม (บาท)</th>
-                    <th className="py-2.5 px-3">พนักงานขาย</th>
-                    <th className="py-2.5 px-3">สถานะ</th>
-                    <th className="py-2.5 px-3 text-center">ติดตาม</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {detailedOrders.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-400">
-                        ไม่มีข้อมูลคำสั่งซื้อในระบบ
-                      </td>
-                    </tr>
-                  ) : (
-                    detailedOrders.slice(0, 4).map((order, oIdx) => (
-                      <tr key={`exec-order-${order.orderNo || oIdx}-${oIdx}`} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-2.5 px-4 font-mono font-bold text-blue-900">{order.orderNo}</td>
-                        <td className="py-2.5 px-4 font-medium text-slate-800">{order.customerName}</td>
-                        <td className="py-2.5 px-3 text-right font-bold text-slate-900">฿{order.totalAmount.toLocaleString()}</td>
-                        <td className="py-2.5 px-3 text-slate-700">{order.salesRep}</td>
-                        <td className="py-2.5 px-3">
-                          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            {order.statusLabel}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 text-center">
-                          <button
-                            onClick={() => onSearchDoc(order.orderNo)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-50 cursor-pointer"
-                            title="ติดตามเอกสาร"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Department Filter Dynamic Section */}
-      {appliedDept === 'คลังสินค้า' && (
-        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-2xs space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Inbox className="w-5 h-5 text-blue-600" />
-              <h3 className="font-bold text-base text-slate-900">
-                รายการเอกสารคลังสินค้าตามตัวกรอง ({filteredWarehouseDocs.length} รายการ)
-              </h3>
-            </div>
-            {onNavigateScreen && (
-              <button
-                onClick={() => onNavigateScreen('warehouse')}
-                className="text-xs font-bold text-blue-700 hover:text-blue-900 flex items-center gap-1 cursor-pointer"
-              >
-                <span>ดูหน้ารายงานคลังสินค้าเต็ม</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-
-          <div className="overflow-x-auto border border-slate-200 rounded-xl">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
-                <tr>
-                  <th className="py-2.5 px-4">เลขที่เอกสาร</th>
-                  <th className="py-2.5 px-4">ลูกค้า</th>
-                  <th className="py-2.5 px-3">เวลาเริ่ม</th>
-                  <th className="py-2.5 px-3 text-right">จำนวนชิ้น</th>
-                  <th className="py-2.5 px-3">ผู้จัดสินค้า</th>
-                  <th className="py-2.5 px-3">สถานะ</th>
-                  <th className="py-2.5 px-3 text-center">ติดตาม</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredWarehouseDocs.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
-                      ไม่มีข้อมูลเอกสารคลังสินค้าในระบบ
-                    </td>
-                  </tr>
-                ) : (
-                  filteredWarehouseDocs.map((doc, dIdx) => (
-                    <tr key={`exec-wh-${doc.id || doc.docNo || dIdx}-${dIdx}`} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-2.5 px-4 font-mono font-bold text-blue-900">{doc.docNo}</td>
-                      <td className="py-2.5 px-4 font-medium text-slate-800">{doc.customer}</td>
-                      <td className="py-2.5 px-3 text-slate-600">{doc.startTime}</td>
-                      <td className="py-2.5 px-3 text-right font-bold text-slate-900">{doc.itemsCount}</td>
-                      <td className="py-2.5 px-3 text-slate-700">{doc.pickerName}</td>
-                      <td className="py-2.5 px-3">
-                        <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          {doc.statusLabel}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        <button
-                          onClick={() => onSearchDoc(doc.docNo)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-50"
-                          title="ติดตามเอกสาร"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {appliedDept === 'การจัดส่ง' && (
-        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-2xs space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Truck className="w-5 h-5 text-blue-600" />
-              <h3 className="font-bold text-base text-slate-900">
-                รายการเที่ยวจัดส่งตามตัวกรอง ({filteredDeliveryTrips.length} เที่ยว)
-              </h3>
-            </div>
-            {onNavigateScreen && (
-              <button
-                onClick={() => onNavigateScreen('delivery')}
-                className="text-xs font-bold text-blue-700 hover:text-blue-900 flex items-center gap-1 cursor-pointer"
-              >
-                <span>ดูหน้ารายงานการจัดส่งเต็ม</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-
-          <div className="overflow-x-auto border border-slate-200 rounded-xl">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
-                <tr>
-                  <th className="py-2.5 px-4">เลขที่ใบส่งของ</th>
-                  <th className="py-2.5 px-4">ใบสั่งขาย (SO)</th>
-                  <th className="py-2.5 px-3">ทะเบียนรถ</th>
-                  <th className="py-2.5 px-3">พนักงานขับรถ</th>
-                  <th className="py-2.5 px-4">ปลายทาง</th>
-                  <th className="py-2.5 px-3">สถานะ</th>
-                  <th className="py-2.5 px-3 text-center">ติดตาม</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredDeliveryTrips.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
-                      ไม่มีข้อมูลเที่ยวจัดส่งในระบบ
-                    </td>
-                  </tr>
-                ) : (
-                  filteredDeliveryTrips.map((trip, tIdx) => (
-                    <tr key={`exec-del-${trip.id || trip.deliveryNo || tIdx}-${tIdx}`} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-2.5 px-4 font-mono font-bold text-blue-900">{trip.deliveryNo}</td>
-                      <td className="py-2.5 px-4 font-mono text-slate-700">{trip.salesOrderNo}</td>
-                      <td className="py-2.5 px-3 text-slate-700 font-medium">{trip.licensePlate}</td>
-                      <td className="py-2.5 px-3 text-slate-700">{trip.driverName}</td>
-                      <td className="py-2.5 px-4 text-slate-800 font-medium truncate max-w-[200px]">{trip.destination}</td>
-                      <td className="py-2.5 px-3">
-                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
-                          trip.status === 'completed' 
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
-                            : trip.status === 'delayed'
-                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                            : 'bg-blue-50 text-blue-700 border border-blue-200'
-                        }`}>
-                          {trip.statusLabel}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        <button
-                          onClick={() => onSearchDoc(trip.salesOrderNo)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-50"
-                          title="ติดตามเอกสาร"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {false && (
         <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-2xs space-y-5">
@@ -2140,7 +1818,7 @@ export const ExecutiveOverview: React.FC<ExecutiveOverviewProps> = ({
         </div>
       )}
 
-      <BookingTrackingSection orders={detailedOrders} warehouse={warehouseDocs} trips={deliveryTrips} />
+      <BookingTrackingSection rows={bookingRows} periodStart={appliedStartDate} periodEnd={appliedEndDate} />
     </div>
   );
 };

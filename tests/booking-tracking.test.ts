@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bookingDate, buildBookingTracking, filterBookingTracking } from '../src/utils/bookingTracking';
+import { bookingDate, buildBookingTracking, filterBookingTracking, summarizeBookingLeadTime } from '../src/utils/bookingTracking';
 import type { DetailedSalesOrder, DeliveryTrip, WarehouseDoc } from '../src/types';
 
 const sale = (docNo = 'BK-001', date = '01/10/2569') => ({ docNo, date } as DetailedSalesOrder);
@@ -33,4 +33,18 @@ test('search uses the sales creation date inclusively, not the load date', () =>
   assert.equal(filterBookingTracking(rows, 'bk/001', '2026-10-01', '2026-10-01').length, 1);
   assert.equal(filterBookingTracking(rows, '', '2026-10-06', '').length, 0);
   assert.equal(filterBookingTracking(rows, '', '', '').length, 2);
+});
+
+test('delivery target and booking tracker average the same completed bookings in the sales-date period', () => {
+  const rows = buildBookingTracking(
+    [sale('BK1', '2026-10-01'), sale('BK2', '2026-10-02'), sale('BK3', '2026-10-03'), sale('OLD', '2026-09-01')],
+    [],
+    [
+      trip('2026-10-02', 'BK1'), trip('2026-10-05', 'BK1'),
+      trip('2026-10-04', 'BK2'), trip(undefined, 'BK2'),
+      trip('2026-10-07', 'BK3'), trip('2026-09-10', 'OLD'),
+    ]
+  );
+  assert.deepEqual(summarizeBookingLeadTime(filterBookingTracking(rows, '', '2026-10-01', '2026-10-03')), { days: 4, count: 2 });
+  assert.deepEqual(summarizeBookingLeadTime(rows), { days: 5.7, count: 3 });
 });

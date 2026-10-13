@@ -68,19 +68,20 @@ test('administrator cannot add synthetic usernames or remove own access',async()
   assert.equal(state.commits,0);
 });
 
-const targets = {kpiTargetDays:3,slaTargetPercent:95,utilizationTarget:85,warehousePickingLeadTimeTarget:2,monthlySalesTarget:20};
+const targets = {warehouseCompletionTargetPercent:80,warehousePickingLeadTimeTarget:2,monthlySalesTarget:20,averageSalesPerBillTargetBaht:20000,deliveryCompletionTargetPercent:80,salesToLoadedLeadTimeTargetDays:5};
 test('KPI save validates authoritative admin identity and values before writing',async()=>{
   const {api,state}=await setup();
   await assert.rejects(api.saveKpiTargets(targets));
   assert.equal(state.write,undefined);
   state.record.role='admin';
-  for(const invalid of [{slaTargetPercent:101},{kpiTargetDays:-1},{monthlySalesTarget:0},{warehousePickingLeadTimeTarget:NaN}]) await assert.rejects(api.saveKpiTargets({...targets,...invalid}));
+  for(const invalid of [{warehouseCompletionTargetPercent:101},{deliveryCompletionTargetPercent:-1},{salesToLoadedLeadTimeTargetDays:0},{averageSalesPerBillTargetBaht:0},{monthlySalesTarget:0},{warehousePickingLeadTimeTarget:NaN}]) await assert.rejects(api.saveKpiTargets({...targets,...invalid}));
   assert.equal(state.write,undefined);
-  await api.saveKpiTargets({...targets,slaTargetPercent:0});
+  await api.saveKpiTargets({...targets,deliveryCompletionTargetPercent:0});
   assert.equal(state.write.ref.collection,'settings');
   assert.equal(state.write.ref.id,'kpiTargets');
   assert.equal(state.write.data.updatedBy,'uid-1');
-  assert.equal(state.write.data.slaTargetPercent,0);
+  assert.equal(state.write.data.deliveryCompletionTargetPercent,0);
+  assert.equal(Object.hasOwn(state.write.data,'slaTargetPercent'),false);
 });
 test('shared KPI snapshot replaces browser-specific targets and reports failures',async()=>{
   const {api,state,storage}=await setup();
@@ -89,11 +90,24 @@ test('shared KPI snapshot replaces browser-specific targets and reports failures
   state.snapshot({exists:()=>true,data:()=>targets});
   assert.equal(JSON.parse(storage.get('technicpet_kpi_targets')).monthlySalesTarget,20);
   assert.equal(error,null);
-  state.snapshot({exists:()=>true,data:()=>({...targets,kpiTargetDays:-1})});
+  state.snapshot({exists:()=>true,data:()=>({...targets,salesToLoadedLeadTimeTargetDays:-1})});
   assert.ok(error);
-  assert.equal(JSON.parse(storage.get('technicpet_kpi_targets')).kpiTargetDays,3);
+  assert.equal(JSON.parse(storage.get('technicpet_kpi_targets')).salesToLoadedLeadTimeTargetDays,6);
   state.snapshotError(Error('permission-denied'));
   assert.ok(error.includes('Firestore Rules'));
+});
+test('legacy KPI document keeps monthly sales and picking targets without retaining old fields',async()=>{
+  const {api,state,storage}=await setup();
+  let error;
+  api.subscribeToKpiTargets(value=>{error=value;});
+  state.snapshot({exists:()=>true,data:()=>({kpiTargetDays:4,slaTargetPercent:95,utilizationTarget:85,warehousePickingLeadTimeTarget:2,monthlySalesTarget:20})});
+  const migrated=JSON.parse(storage.get('technicpet_kpi_targets'));
+  assert.equal(migrated.warehousePickingLeadTimeTarget,2);
+  assert.equal(migrated.monthlySalesTarget,20);
+  assert.equal(migrated.salesToLoadedLeadTimeTargetDays,6);
+  assert.equal(migrated.averageSalesPerBillTargetBaht,20000);
+  assert.equal(Object.hasOwn(migrated,'utilizationTarget'),false);
+  assert.equal(error,null);
 });
 test('rejected KPI write cannot replace the last confirmed settings',async()=>{
   const {api,state,storage}=await setup();state.record.role='admin';state.writeError=true;

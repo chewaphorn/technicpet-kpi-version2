@@ -164,7 +164,7 @@ export const SalesReportView: React.FC<SalesReportViewProps> = ({
   const [showLogicInfo, setShowLogicInfo] = useState(false);
 
   // Company Monthly Sales Target (Synchronized from Settings)
-  const { monthlySalesTarget: companyMonthlySalesTarget } = useReportTargets();
+  const { monthlySalesTarget: companyMonthlySalesTarget, averageSalesPerBillTargetBaht } = useReportTargets();
 
   // Document Tracking Search State (Only shows documents when searched)
   const [trackingSearchQuery, setTrackingSearchQuery] = useState('');
@@ -737,7 +737,7 @@ export const SalesReportView: React.FC<SalesReportViewProps> = ({
             </div>
             <div className="flex items-center gap-1.5 mt-1.5 text-xs font-medium text-slate-500">
               <TrendingUp className="w-3.5 h-3.5 text-teal-600" />
-              <span>เฉลี่ยต่อบิล {reactiveMetrics.avgTicketFormatted}</span>
+              <span>เฉลี่ยต่อบิล {reactiveMetrics.avgTicketFormatted} · เป้าหมาย ≥ ฿{averageSalesPerBillTargetBaht.toLocaleString()}</span>
             </div>
           </div>
         </div>

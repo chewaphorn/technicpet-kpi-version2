@@ -1,7 +1,9 @@
 import { useReportTargets } from '../hooks/useReportTargets';
+import { buildDepartmentGoalGroups, formatGoalValue, type GoalMetric } from '../utils/departmentGoals';
+import { buildBookingTracking, filterBookingTracking } from '../utils/bookingTracking';
 import { ReportFilters } from '../utils/reportRequest';
 import { calculateSalesReportMetrics, calculateSalesCustomers, calculateSalesTotals, filterSalesOrders, getSalesDocumentType } from '../utils/salesReportMetrics';
-import { aggregateWarehouseDocs, filterWarehouseDocs, calculateWarehouseMetrics, aggregateDeliveryTrips, filterDeliveryTrips, calculateDeliveryMetrics } from '../utils/logisticsReportMetrics';
+import { aggregateWarehouseDocs, filterWarehouseDocs, calculateWarehouseMetrics, aggregateDeliveryTrips, filterDeliveryTrips, calculateDeliveryMetrics, getWarehouseReportDate, getDeliveryReportDate } from '../utils/logisticsReportMetrics';
 import { canAccessReport } from '../lib/authControl';
 import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
@@ -36,23 +38,32 @@ import {
   AuthUser
 } from '../types';
 import { exportElementToPDF } from '../utils/pdfExport';
-import { getMinMaxDates } from '../utils/dateUtils';
+import { getMinMaxDates, normalizeDateToISO } from '../utils/dateUtils';
 import confetti from 'canvas-confetti';
 
-const LeadTimeSummary = ({ stats }: { stats: { count: number; min: number; mean: number; max: number; distribution: { range: string; count: number; percentage: number }[] } }) => (
-  <div className="rounded-xl border border-slate-200 p-3 space-y-2 text-xs" data-pdf-section>
-    <p className="font-bold text-slate-700">ระยะเวลาดำเนินงาน (Lead Time) · คำนวณจาก {stats.count.toLocaleString()} บิล</p>
-    <div className="grid grid-cols-3 gap-2 text-center">
-      <p>MIN (เร็วสุด) <strong>{stats.count ? stats.min : '-'} วัน</strong></p>
-      <p>MEAN (เฉลี่ย) <strong>{stats.count ? stats.mean : '-'} วัน</strong></p>
-      <p>MAX (นานสุด) <strong>{stats.count ? stats.max : '-'} วัน</strong></p>
+const PDFGoalMetric = ({ metric, color }: { metric: GoalMetric; color: string }) => {
+  const scale = metric.unit === 'percent' ? 100 : Math.max(metric.actual ?? 0, metric.target, 1) * 1.1;
+  const resultWidth = metric.actual === null ? 0 : Math.min(100, Math.max(0, metric.actual / scale * 100));
+  const targetPosition = Math.min(100, Math.max(0, metric.target / scale * 100));
+  const met = metric.actual !== null && (metric.direction === 'higher' ? metric.actual >= metric.target : metric.actual <= metric.target);
+  return <div className="space-y-1.5" data-testid={`pdf-goal-${metric.id}`} data-pdf-section>
+    <p className="text-[11px] font-bold text-slate-800">{metric.label}</p>
+    <div className="flex items-center justify-between gap-2 text-[10px]">
+      <span className="font-bold text-slate-900">ผลจริง {metric.actual === null ? '—' : formatGoalValue(metric.actual, metric.unit)}</span>
+      <span className="font-semibold text-slate-600">เป้าหมาย {metric.direction === 'higher' ? '≥' : '≤'} {formatGoalValue(metric.target, metric.unit)}</span>
     </div>
-    <div className="grid grid-cols-4 gap-2 border-t border-slate-100 pt-2 text-[10px]">
-      {stats.distribution.map(item => <p key={item.range}>{item.range}<br /><strong>{item.count} บิล ({item.percentage}%)</strong></p>)}
+    <div className="relative h-2.5 rounded-full bg-slate-100">
+      <div className="h-full rounded-full" style={{ width: `${resultWidth}%`, backgroundColor: color }} />
+      <div className="absolute -top-0.5 h-3.5 w-0.5 bg-slate-800" style={{ left: `${targetPosition}%` }} />
     </div>
-    {stats.count === 0 && <p className="text-slate-500">ไม่มีข้อมูลระยะเวลาที่คำนวณได้ในช่วงนี้</p>}
-  </div>
-);
+    <div className="flex justify-between gap-2 text-[9px]">
+      <span className="text-slate-500">{metric.note}</span>
+      <span className={metric.actual === null ? 'text-slate-500' : met ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
+        {metric.actual === null ? 'ไม่มีข้อมูล' : met ? 'ถึงเป้าหมาย' : metric.direction === 'higher' ? 'ต่ำกว่าเป้าหมาย' : 'เกินเป้าหมาย'}
+      </span>
+    </div>
+  </div>;
+};
 
 export interface PDFReportPreviewModalProps {
   isOpen: boolean;
@@ -109,20 +120,19 @@ const PDFReportContent: React.FC<PDFReportPreviewModalProps> = ({
     setPageCount(pages);
     setPaginationError(error);
   }, []);
-  const { warehousePickingLeadTimeTarget, monthlySalesTarget } = useReportTargets();
+  const reportTargets = useReportTargets();
+  const { warehousePickingLeadTimeTarget, monthlySalesTarget } = reportTargets;
 
   const safeSalesOrders = React.useMemo(() => detailedSalesOrders, [detailedSalesOrders]);
   const safeWarehouseDocs = React.useMemo(() => warehouseDocs, [warehouseDocs]);
   const safeDeliveryTrips = React.useMemo(() => deliveryTrips, [deliveryTrips]);
   const safeSalesReps = React.useMemo(() => salesReps, [salesReps]);
 
-  const primaryDeliveryDate = (trip: DeliveryTrip) =>
-    trip.plannedDate || trip.orderDate || trip.handoffDate || trip.loadedDate;
   // Use the same source date as each department dashboard when opening a PDF.
   const datasetDateRange = React.useMemo(() => {
     const salesDates = safeSalesOrders.map((order) => order.date);
-    const warehouseDates = safeWarehouseDocs.map((doc) => doc.date);
-    const deliveryDates = safeDeliveryTrips.map(primaryDeliveryDate);
+    const warehouseDates = safeWarehouseDocs.map(getWarehouseReportDate);
+    const deliveryDates = safeDeliveryTrips.map(getDeliveryReportDate);
     const dates = activeDept === 'sales'
       ? salesDates
       : activeDept === 'warehouse'
@@ -176,7 +186,33 @@ const PDFReportContent: React.FC<PDFReportPreviewModalProps> = ({
     uniqueVehiclesCount, pendingDeliveriesCount, delayed: delayedTrips,
     leadTimeStats: deliveryLeadTimeStats,
   } = React.useMemo(() => calculateDeliveryMetrics(filteredDeliveryTrips), [filteredDeliveryTrips]);
-  const avgDeliveryLeadTimeDays = deliveryLeadTimeStats.mean;
+  const bookingRows = React.useMemo(() => buildBookingTracking(safeSalesOrders, safeWarehouseDocs, safeDeliveryTrips), [safeSalesOrders, safeWarehouseDocs, safeDeliveryTrips]);
+  const periodBookingRows = React.useMemo(() => filterBookingTracking(bookingRows, '', activeStartDate, activeEndDate), [bookingRows, activeStartDate, activeEndDate]);
+  const departmentGoalGroups = React.useMemo(() => buildDepartmentGoalGroups({
+    orders: filteredOrders,
+    warehouseDocs: filteredWarehouseDocs,
+    deliveryTrips: filteredDeliveryTrips,
+    bookingRows: periodBookingRows,
+    startDate: activeStartDate,
+    endDate: activeEndDate,
+    targets: reportTargets,
+    department: activeDept === 'overview' || activeDept === 'all' ? 'all' : activeDept,
+  }), [filteredOrders, filteredWarehouseDocs, filteredDeliveryTrips, periodBookingRows, activeStartDate, activeEndDate, reportTargets, activeDept]);
+  const salesMonthlyGoal = departmentGoalGroups.flatMap(group => group.metrics).find(metric => metric.id === 'sales-monthly');
+  const salesMonthlyTrend = React.useMemo(() => {
+    const buckets = new Map<string, DetailedSalesOrder[]>();
+    filteredOrders.forEach(order => {
+      const month = normalizeDateToISO(order.date).slice(0, 7);
+      if (!month) return;
+      const rows = buckets.get(month) || [];
+      rows.push(order);
+      buckets.set(month, rows);
+    });
+    return [...buckets].sort(([left], [right]) => left.localeCompare(right)).map(([month, rows]) => ({
+      month, orders: rows.length, revenue: calculateSalesTotals(rows).totalRevenue,
+    }));
+  }, [filteredOrders]);
+  const maxMonthlyRevenue = Math.max(1, ...salesMonthlyTrend.map(month => month.revenue));
   const activeRowCount = activeDept === 'sales' ? totalOrdersCount
     : activeDept === 'warehouse' ? totalWarehouseDocs
     : activeDept === 'delivery' ? totalTrips
@@ -451,7 +487,7 @@ const PDFReportContent: React.FC<PDFReportPreviewModalProps> = ({
         <div className="pdf-preview-scroll p-4 sm:p-8 overflow-auto flex-1 bg-slate-200/80">
           <PaginatedReport
             reportRef={printContainerRef}
-            revision={JSON.stringify([activeDept, activeStartDate, activeEndDate, reportDocNo, warehousePickingLeadTimeTarget, monthlySalesTarget])}
+            revision={JSON.stringify([activeDept, activeStartDate, activeEndDate, reportDocNo, reportTargets])}
             onLayout={handleLayout}
           >
             {/* 1. Formal Report Header */}
@@ -499,7 +535,61 @@ const PDFReportContent: React.FC<PDFReportPreviewModalProps> = ({
 
             {/* 2. SALES REPORT SECTION */}
             {filterDescription && <p className="text-xs text-slate-600">ตัวกรอง: {filterDescription}</p>}
-            {(activeDept === 'sales' || activeDept === 'all' || activeDept === 'overview') && (
+            {(activeDept === 'overview' || activeDept === 'all') && <div className="space-y-3" data-pdf-flow>
+              <div className="border-b border-slate-200 pb-2" data-pdf-keep-next>
+                <h3 className="text-sm font-black text-[#0a2558]">สรุปภาพรวมผู้บริหารตามช่วงวันที่เลือก</h3>
+                <p className="text-[10px] text-slate-500">ข้อมูลและเงื่อนไขการคำนวณชุดเดียวกับหน้ารายงานภาพรวม</p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-[10px]" data-pdf-section>
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-2.5 space-y-1">
+                  <p className="font-black text-blue-900">ฝ่ายขาย</p>
+                  <p>จำนวนคำสั่งซื้อ <strong>{totalOrdersCount.toLocaleString()} บิล</strong></p>
+                  <p>ยอดขายรวม <strong>฿{totalRevenue.toLocaleString()}</strong></p>
+                  <p>ยอดเฉลี่ยต่อบิล <strong>฿{avgTicket.toLocaleString()}</strong></p>
+                </div>
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5 space-y-1">
+                  <p className="font-black text-emerald-900">คลังสินค้า</p>
+                  <p>รับเข้า <strong>{totalWarehouseDocs.toLocaleString()} ใบ</strong></p>
+                  <p>จัดเสร็จ <strong>{completedWarehouseDocs.toLocaleString()} ใบ</strong></p>
+                  <p>ค้างจัด <strong>{pendingWarehouseDocs.toLocaleString()} ใบ</strong></p>
+                </div>
+                <div className="rounded-xl border border-purple-200 bg-purple-50 p-2.5 space-y-1">
+                  <p className="font-black text-purple-900">ขนส่ง</p>
+                  <p>บิลทั้งหมด <strong>{totalTrips.toLocaleString()} ใบ</strong></p>
+                  <p>โหลดสำเร็จ <strong>{completedTrips.toLocaleString()} ใบ</strong></p>
+                  <p>ค้างส่ง / ล่าช้า <strong>{pendingDeliveriesCount.toLocaleString()} ใบ</strong></p>
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 p-3 space-y-2" data-pdf-flow data-testid="pdf-sales-trend">
+                <div data-pdf-keep-next>
+                  <h4 className="text-[11px] font-black text-slate-800">กราฟสถิติยอดขายรายเดือน</h4>
+                  <p className="text-[9px] text-slate-500">ยอดขายรวมเป็นแถบ · จำนวนบิลขายแสดงทางขวา</p>
+                </div>
+                {salesMonthlyTrend.length ? salesMonthlyTrend.map(month => <div key={month.month} className="grid grid-cols-[65px_1fr_90px] items-center gap-2 text-[9px]" data-pdf-section>
+                  <span className="font-semibold text-slate-600">{month.month}</span>
+                  <div className="h-4 rounded bg-slate-100 relative overflow-hidden">
+                    <div className="h-full rounded bg-[#0a2558]" style={{ width: `${Math.max(0, month.revenue) / maxMonthlyRevenue * 100}%` }} />
+                    <span className="absolute inset-0 flex items-center justify-center font-bold text-slate-700">฿{month.revenue.toLocaleString()}</span>
+                  </div>
+                  <span className="text-right font-semibold text-sky-700">{month.orders.toLocaleString()} บิล</span>
+                </div>) : <p className="text-[10px] text-slate-500">ไม่มีข้อมูลยอดขายตามช่วงเวลาที่เลือก</p>}
+              </div>
+            </div>}
+
+            <div className="space-y-3" data-pdf-flow data-testid="pdf-department-goals">
+              <div className="border-b border-slate-200 pb-2" data-pdf-keep-next>
+                <h3 className="text-sm font-black text-[#0a2558]">ผลลัพธ์เทียบเป้าหมายรายแผนก ({activeDept === 'overview' || activeDept === 'all' ? 'ทั้งหมด' : activeDept === 'sales' ? 'ฝ่ายขาย' : activeDept === 'warehouse' ? 'คลังสินค้า' : 'การจัดส่ง'})</h3>
+                <p className="text-[10px] text-slate-500">แถบสีคือผลจริง ขีดเข้มคือเป้าหมาย · ระยะเวลานับจากวันที่เปิดบิลขาย</p>
+              </div>
+              <div className={departmentGoalGroups.length === 1 ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-3 gap-2'}>
+                {departmentGoalGroups.map(group => <section key={group.department} className="rounded-xl border border-slate-200 p-2.5 space-y-3" data-pdf-section>
+                  <h4 className="text-xs font-black" style={{ color: group.color }}>{group.department}</h4>
+                  {group.metrics.map(metric => <div key={metric.id}><PDFGoalMetric metric={metric} color={group.color} /></div>)}
+                </section>)}
+              </div>
+            </div>
+
+            {activeDept === 'sales' && (
               <div className="space-y-3.5" data-pdf-flow>
                 <div className="flex items-center justify-between border-b border-slate-200 pb-2" data-pdf-keep-next>
                   <h3 className="text-sm font-black text-[#0a2558] flex items-center gap-2 uppercase tracking-wide">
@@ -535,11 +625,11 @@ const PDFReportContent: React.FC<PDFReportPreviewModalProps> = ({
                     <p className="text-[9px] text-slate-500 whitespace-nowrap">Average Ticket Size</p>
                   </div>
                   <div className="p-2.5 bg-indigo-50/70 rounded-xl border border-indigo-200">
-                    <p className="text-[10px] font-bold text-indigo-800 uppercase whitespace-nowrap">เป้าหมายบริษัท</p>
+                    <p className="text-[10px] font-bold text-indigo-800 uppercase whitespace-nowrap">ยอดขายเฉลี่ยต่อเดือน</p>
                     <p className="text-base font-black text-slate-900 mt-0.5 whitespace-nowrap">
-                      {((totalRevenue / salesMetrics.companyTargetInBaht) * 100).toFixed(1)}%
+                      {salesMonthlyGoal?.actual === null || salesMonthlyGoal?.actual === undefined ? '—' : formatGoalValue(salesMonthlyGoal.actual, 'million-baht')}
                     </p>
-                    <p className="text-[9px] text-slate-500 whitespace-nowrap">เทียบเป้า {monthlySalesTarget.toLocaleString()} ลบ.</p>
+                    <p className="text-[9px] text-slate-500 whitespace-nowrap">เป้าหมาย ≥ ฿{monthlySalesTarget.toLocaleString()} ล้าน/เดือน</p>
                   </div>
                 </div>
 
@@ -680,7 +770,7 @@ const PDFReportContent: React.FC<PDFReportPreviewModalProps> = ({
             )}
 
             {/* 3. WAREHOUSE REPORT SECTION */}
-            {(activeDept === 'warehouse' || activeDept === 'all' || activeDept === 'overview') && (
+            {activeDept === 'warehouse' && (
               <div className="space-y-3.5 pt-1" data-pdf-flow>
                 <div className="flex items-center justify-between border-b border-slate-200 pb-2" data-pdf-keep-next>
                   <h3 className="text-sm font-black text-[#0a2558] flex items-center gap-2 uppercase tracking-wide">
@@ -746,8 +836,9 @@ const PDFReportContent: React.FC<PDFReportPreviewModalProps> = ({
                     <p className="font-bold text-slate-700">Picking Lead Time · วันที่จัดเสร็จ - วันที่เปิดบิลขาย</p>
                     <p className="text-slate-500">คำนวณได้ {warehouseLeadTimeStats.count.toLocaleString()} / {completedWarehouseDocs.toLocaleString()} บิลจัดเสร็จ · ไม่มีคู่วันที่ {warehouseLeadTimeUnavailableDocs.length.toLocaleString()} บิล</p>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-center border-t border-slate-100 pt-2">
+                  <div className="grid grid-cols-3 gap-2 text-center border-t border-slate-100 pt-2">
                     <p>MIN (ต่ำสุด) <strong>{warehouseLeadTimeStats.count ? warehouseLeadTimeStats.min : '-'} วัน</strong></p>
+                    <p>MEAN (เฉลี่ย) <strong>{warehouseLeadTimeStats.count ? warehouseLeadTimeStats.mean : '-'} วัน</strong></p>
                     <p>MAX (สูงสุด) <strong>{warehouseLeadTimeStats.count ? warehouseLeadTimeStats.max : '-'} วัน</strong></p>
                   </div>
                 </div>
@@ -755,7 +846,7 @@ const PDFReportContent: React.FC<PDFReportPreviewModalProps> = ({
             )}
 
             {/* 4. DELIVERY & FLEET REPORT SECTION */}
-            {(activeDept === 'delivery' || activeDept === 'all' || activeDept === 'overview') && (
+            {activeDept === 'delivery' && (
               <div className="space-y-3.5 pt-1" data-pdf-flow>
                 <div className="flex items-center justify-between border-b border-slate-200 pb-2" data-pdf-keep-next>
                   <h3 className="text-sm font-black text-[#0a2558] flex items-center gap-2 uppercase tracking-wide">
@@ -805,15 +896,15 @@ const PDFReportContent: React.FC<PDFReportPreviewModalProps> = ({
                     <p className="text-[9px] text-slate-500 whitespace-nowrap">Total Weight</p>
                   </div>
                   <div className="p-2.5 bg-sky-50/80 rounded-xl border border-sky-200">
-                    <p className="text-[10px] font-bold text-sky-800 uppercase whitespace-nowrap">Lead Time เฉลี่ย</p>
+                    <p className="text-[10px] font-bold text-sky-800 uppercase whitespace-nowrap">ระยะเวลาจัดส่งเฉลี่ย</p>
                     <p className="text-base font-black text-slate-900 mt-0.5 whitespace-nowrap">
-                      {avgDeliveryLeadTimeDays} <span className="text-xs font-normal">วัน</span>
+                      {departmentGoalGroups[0]?.metrics.find(metric => metric.id === 'delivery-sales-to-loaded-days')?.actual ?? '—'} <span className="text-xs font-normal">วัน</span>
                     </p>
-                    <p className="text-[9px] text-slate-500 whitespace-nowrap">Average Lead Time</p>
+                    <p className="text-[9px] text-slate-500 whitespace-nowrap">เปิดบิลขาย → โหลดเสร็จ</p>
                   </div>
                 </div>
 
-                <LeadTimeSummary stats={deliveryLeadTimeStats} />
+                <div className="text-[10px] text-slate-500" data-pdf-section>ระยะเวลาจากรับงานขนส่งถึงโหลดเสร็จ (ตัวชี้วัดปฏิบัติงาน): เฉลี่ย {deliveryLeadTimeStats.count ? `${deliveryLeadTimeStats.mean} วัน` : 'ไม่มีข้อมูล'}</div>
                 {/* Delivery Logistics Operations Summary */}
                 <div className="space-y-1.5">
                   <h4 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">

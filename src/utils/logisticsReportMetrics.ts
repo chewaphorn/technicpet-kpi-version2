@@ -6,6 +6,15 @@ import { warehouseDays, warehouseDate } from './warehouseDates';
 // Shared by dashboard, overview and PDF. Filter before computing any totals.
 export interface ReportRowFilters { fromDate?: string; toDate?: string; search?: string; status?: string; vehicle?: string; }
 
+/** Use the first valid department date, not merely the first non-empty cell. */
+export const getWarehouseReportDate = (doc: WarehouseDoc): string =>
+  normalizeDateToISO(doc.receivedBookingDate) || normalizeDateToISO(doc.date);
+
+export const getDeliveryReportDate = (trip: DeliveryTrip): string =>
+  normalizeDateToISO(trip.plannedDate) || normalizeDateToISO(trip.orderDate) ||
+  normalizeDateToISO(trip.handoffDate) || normalizeDateToISO(trip.handoverDate) ||
+  normalizeDateToISO(trip.loadedDate);
+
 /**
  * Calculate calendar-day picking lead time from the sales opening date.
  * This is deliberately date-pair based so the KPI cannot silently use a
@@ -116,7 +125,7 @@ export function aggregateWarehouseDocs(
 export function filterWarehouseDocs(aggregatedDocs: WarehouseDoc[], {fromDate = '', toDate = '', search: searchQuery = '', status: statusFilter = 'all'}: ReportRowFilters = {}, pickingLeadTimeTarget = 3) {
     return aggregatedDocs.filter((doc) => {
       // Date filtering
-      const iso = normalizeDateToISO(doc.date);
+      const iso = getWarehouseReportDate(doc);
       if ((fromDate || toDate) && !iso) return false;
       if (iso) {
         if (fromDate && iso < fromDate) return false;
@@ -456,8 +465,7 @@ export function filterDeliveryTrips(uniqueGroupedTrips: DeliveryTrip[], {fromDat
   const searchDocFilter = '';
     return uniqueGroupedTrips.filter((trip) => {
       // Date filtering
-      const primaryDate = trip.plannedDate || trip.orderDate || trip.handoffDate || trip.loadedDate;
-      const iso = primaryDate ? normalizeDateToISO(primaryDate) : null;
+      const iso = getDeliveryReportDate(trip);
       if ((fromDate || toDate) && !iso) return false;
       if (iso) {
         if (fromDate && iso < fromDate) return false;

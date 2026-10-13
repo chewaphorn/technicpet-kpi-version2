@@ -1,5 +1,5 @@
 import { useReportTargets } from '../hooks/useReportTargets';
-import { aggregateWarehouseDocs, filterWarehouseDocs, calculateWarehouseMetrics, getPickingLeadTimeDays, isWarehouseDocCompleted } from '../utils/logisticsReportMetrics';
+import { aggregateWarehouseDocs, filterWarehouseDocs, calculateWarehouseMetrics, getPickingLeadTimeDays, isWarehouseDocCompleted, getWarehouseReportDate } from '../utils/logisticsReportMetrics';
 import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { WarehouseDoc, DetailedSalesOrder, SalesOrderItem, AuthUser } from '../types';
@@ -79,7 +79,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
   lastSyncWarehouse,
 }) => {
   const datasetDateRange = useMemo(() => {
-    const dates = docs.map(d => d.date);
+    const dates = docs.map(getWarehouseReportDate);
     return getMinMaxDates(dates, '', '');
   }, [docs]);
 
@@ -91,7 +91,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
   const [expandedLeadTimeDetails, setExpandedLeadTimeDetails] = useState<'unavailable' | 'maximum' | null>(null);
   const [pageSize, setPageSize] = useState<10 | 25 | 50>(10);
   const [currentPage, setCurrentPage] = useState(1);
-  const { warehousePickingLeadTimeTarget: pickingLeadTimeTarget } = useReportTargets();
+  const { warehousePickingLeadTimeTarget: pickingLeadTimeTarget, warehouseCompletionTargetPercent } = useReportTargets();
 
   // Sync date filter range when dataset changes
   useEffect(() => {
@@ -190,20 +190,10 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
 
   const handleExportExcel = () => {
     try {
-      const exportRows = filteredDocs.map((doc, index) => {
+      const exportRows = filteredDocs.map((doc) => {
         const isCompleted = isWarehouseDocCompleted(doc);
-        const isDelayed = isDocDelayed(doc);
-        const statusLabel = isDelayed
-          ? `จัดช้าเกิน SLA (+${Math.max(0, (getPickingLeadTimeDays(doc) ?? doc.pendingDays ?? 0) - pickingLeadTimeTarget)} วัน)`
-          : isCompleted
-            ? 'จัดเสร็จแล้ว'
-            : doc.status === 'picking'
-              ? 'กำลังหยิบสินค้า'
-              : doc.statusLabel || 'ไม่ระบุสถานะ';
-        const itemCount = doc.itemsCount;
 
         return {
-          'ลำดับ': index + 1,
           'เลขที่ใบจอง': doc.docNo,
           'ลูกค้า': doc.customer || '-',
           'วันที่เปิดบิลขาย': doc.salesOrderDate || '-',
@@ -211,11 +201,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
           'วันที่จัดเสร็จ': doc.completedDate || '-',
           'จำนวนวันค้างจัดของ': isCompleted ? '-' : (doc.pendingDays ?? '-'),
           'Lead Time (วัน)': getPickingLeadTimeDays(doc) ?? '-',
-          'สถานะ': statusLabel,
-          'จำนวนรายการ': itemCount,
-          'ผู้จัดสินค้า': doc.pickerName || '-',
-          'ส่งต่อฝ่ายขนส่ง': doc.transferredToDelivery ? 'ส่งต่อแล้ว' : 'ยังไม่ส่งต่อ',
-          'วันเริ่มล่าช้า': doc.delayDate || '-',
+          'จำนวนรายการ': doc.itemsCount,
         };
       });
 
@@ -225,18 +211,31 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
           : [{ 'หมายเหตุ': 'ไม่พบข้อมูลรายงานสถานะใบสั่งจัดสินค้าตามเงื่อนไขที่เลือก' }]
       );
       worksheet['!cols'] = [
-        { wch: 8 }, { wch: 20 }, { wch: 30 }, { wch: 16 },
-        { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 16 },
-        { wch: 24 }, { wch: 16 }, { wch: 24 }, { wch: 18 },
-        { wch: 18 },
+        { wch: 20 }, { wch: 30 }, { wch: 18 }, { wch: 18 },
+        { wch: 18 }, { wch: 22 }, { wch: 18 }, { wch: 16 },
       ];
 
       const workbook = XLSX.utils.book_new();
+      const statusFilterLabels: Record<string, string> = {
+        all: 'ทั้งหมด',
+        completed: 'จัดเสร็จแล้ว',
+        pending_all: 'บิลค้างจัดทั้งหมด',
+        pending: 'รอจัดสินค้า',
+        picking: 'กำลังหยิบสินค้า',
+        delayed: `ล่าช้าเกิน ${pickingLeadTimeTarget} วัน`,
+      };
       const summaryWorksheet = XLSX.utils.json_to_sheet([
         { รายการ: 'ช่วงวันที่รายงาน', ค่า: `${fromDate || 'ไม่จำกัด'} ถึง ${toDate || 'ไม่จำกัด'}` },
+        { รายการ: 'คำค้นหา', ค่า: searchQuery.trim() || 'ทั้งหมด' },
+        { รายการ: 'ตัวกรองสถานะ', ค่า: statusFilterLabels[statusFilter] || statusFilter },
+        { รายการ: 'เป้าหมาย Picking Lead Time (วัน)', ค่า: pickingLeadTimeTarget },
         { รายการ: 'จำนวนรับเข้าใบจองทั้งหมด', ค่า: totalDocsCount },
         { รายการ: 'จำนวนที่จัดได้ทั้งหมด', ค่า: completedDocsCount },
+        { รายการ: 'อัตราจัดสำเร็จ (%)', ค่า: Number(completionPercent) },
+        { รายการ: 'เป้าหมายอัตราจัดสำเร็จ (%)', ค่า: warehouseCompletionTargetPercent },
         { รายการ: 'จำนวนบิลที่ค้างจัดทั้งหมด', ค่า: pendingDocsCount },
+        { รายการ: 'จำนวนบิลที่ล่าช้าเกิน SLA', ค่า: delayedDocsCount },
+        { รายการ: 'Lead Time เฉลี่ย (วัน)', ค่า: avgLeadTimeDays },
         { รายการ: 'Lead Time ต่ำสุด (วัน)', ค่า: leadTimeStats.count ? leadTimeStats.min : '-' },
         { รายการ: 'Lead Time สูงสุด (วัน)', ค่า: leadTimeStats.count ? leadTimeStats.max : '-' },
         { รายการ: 'บิลที่มีคู่วันที่คำนวณ Lead Time ได้', ค่า: `${leadTimeStats.count} / ${completedDocsCount}` },
@@ -417,7 +416,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
           </div>
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-baseline justify-between">
             <div><span className="text-3xl sm:text-4xl font-bold text-emerald-600 tracking-tight tabular-nums">{completedDocsCount.toLocaleString()}</span><span className="text-sm font-bold text-slate-600 ml-1.5">ใบ</span></div>
-            <div className="text-right"><span className="text-xs font-semibold text-slate-500">อัตราจัดสำเร็จ</span><p className="text-xs font-bold text-emerald-700 tabular-nums">{completionPercent}% ({completedDocsCount.toLocaleString()} ใบ)</p></div>
+            <div className="text-right"><span className="text-xs font-semibold text-slate-500">อัตราจัดสำเร็จ</span><p className="text-xs font-bold text-emerald-700 tabular-nums">{completionPercent}% ({completedDocsCount.toLocaleString()} ใบ)</p><p className="text-[11px] text-slate-500">เป้าหมาย ≥ {warehouseCompletionTargetPercent}%</p></div>
           </div>
         </div>
 
@@ -632,7 +631,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
               id="btn-warehouse-export-excel"
               onClick={handleExportExcel}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 border border-emerald-200 shadow-2xs transition-all cursor-pointer"
-              title="ส่งออกรายงานสถานะใบสั่งจัดสินค้าตามตัวกรองเป็น Excel"
+              title="ส่งออกข้อมูลและ KPI ที่แสดงตามตัวกรองปัจจุบันเป็น Excel"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
               <span>Export Excel</span>

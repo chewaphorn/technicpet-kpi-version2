@@ -48,3 +48,11 @@ export function filterBookingTracking<T extends { docNo: string; createdDate: st
     && (!start || Boolean(row.createdDate && row.createdDate >= start))
     && (!end || Boolean(row.createdDate && row.createdDate <= end)));
 }
+
+export function summarizeBookingLeadTime(rows: Array<{ days: number | null }>) {
+  const measuredDays = rows.flatMap(row => row.days !== null && Number.isFinite(row.days) ? [row.days] : []);
+  return {
+    days: measuredDays.length ? Number((measuredDays.reduce((sum, days) => sum + days, 0) / measuredDays.length).toFixed(1)) : null,
+    count: measuredDays.length,
+  };
+}

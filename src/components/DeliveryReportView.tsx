@@ -1,9 +1,10 @@
-import { aggregateDeliveryTrips, filterDeliveryTrips, calculateDeliveryMetrics, isCompletedTrip, deliveryPlanStatus, isDelayedDeliveryTrip, formatShortDate } from '../utils/logisticsReportMetrics';
+import { aggregateDeliveryTrips, filterDeliveryTrips, calculateDeliveryMetrics, isCompletedTrip, deliveryPlanStatus, isDelayedDeliveryTrip, formatShortDate, getDeliveryReportDate } from '../utils/logisticsReportMetrics';
 import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { DeliveryTrip, AuthUser, DetailedSalesOrder } from '../types';
 import { parseDateFlexible, calculateDaysDiff } from '../utils/dataProcessor';
 import { getMinMaxDates } from '../utils/dateUtils';
+import { useReportTargets } from '../hooks/useReportTargets';
 import { 
   Truck, 
   CheckCircle2, 
@@ -78,8 +79,9 @@ export const DeliveryReportView: React.FC<DeliveryReportViewProps> = ({
   syncErrorDelivery,
   lastSyncDelivery,
 }) => {
+  const { deliveryCompletionTargetPercent } = useReportTargets();
   const datasetDateRange = useMemo(() => {
-    const dates = trips.map(t => t.plannedDate || t.orderDate || t.handoffDate || t.loadedDate).filter(Boolean) as string[];
+    const dates = trips.map(getDeliveryReportDate);
     return getMinMaxDates(dates, '', '');
   }, [trips]);
 
@@ -470,7 +472,7 @@ export const DeliveryReportView: React.FC<DeliveryReportViewProps> = ({
             </div>
             <p className="text-[11px] text-slate-500 font-medium mt-1 flex items-center gap-1.5 truncate">
               <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
-              <span>ดำเนินการจัดส่งเสร็จสิ้น</span>
+              <span>ดำเนินการจัดส่งเสร็จสิ้น · เป้าหมาย ≥ {deliveryCompletionTargetPercent}%</span>
             </p>
           </div>
           <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 border border-emerald-100 shadow-2xs">
