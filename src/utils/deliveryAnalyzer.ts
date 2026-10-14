@@ -134,7 +134,7 @@ export function analyzeDeliveryData(
 
       }
 
-      const rawOrderDate = findValue(row, ['วันที่รับใบจอง', 'วันที่ใบจอง', 'received_work_date', 'orderDate', 'order_date', 'วันที่สั่งขาย', 'วันที่สั่งซื้อ'], '');
+      const rawOrderDate = findValue(row, ['วันที่ออกใบจอง', 'วันที่รับใบจอง', 'วันที่ใบจอง', 'received_work_date', 'orderDate', 'order_date', 'วันที่สั่งขาย', 'วันที่สั่งซื้อ'], '');
       const orderDate = rawOrderDate ? String(rawOrderDate).trim() : '';
 
       const rawHandover = findValue(row, ['รับจากคลัง', 'วันที่รับจากคลัง', 'received_total_date', 'วันที่รับไม้ต่อจากคลัง', 'วันที่รับไม้ต่อ', 'วันที่รับมอบ', 'handoffDate', 'handoverDate', 'วันที่เบิกเสร็จ', 'วันที่รับของ'], '');

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { buildSync } = require('esbuild');
 const Module = require('node:module');
 const path = require('node:path');
-const bundle = buildSync({ stdin: { contents: `export * from './src/utils/dataProcessor'; export * from './src/utils/dateUtils'; export * from './src/utils/logisticsReportMetrics'; export * from './src/utils/salesReportMetrics';`, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, platform: 'node', format: 'cjs', packages: 'external', write: false });
+const bundle = buildSync({ stdin: { contents: `export * from './src/utils/dataProcessor'; export * from './src/utils/dateUtils'; export * from './src/utils/logisticsReportMetrics'; export * from './src/utils/salesReportMetrics'; export * from './src/utils/deliveryAnalyzer';`, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, platform: 'node', format: 'cjs', packages: 'external', write: false });
 const compiled = new Module(path.resolve('__system_tests.cjs'));
 compiled.filename = path.resolve('__system_tests.cjs');
 compiled.paths = Module._nodeModulePaths(process.cwd());
@@ -51,6 +51,19 @@ test('department date filters retain rows when the primary date is missing or in
   assert.equal(api.filterWarehouseDocs([warehouseDoc], { fromDate: '2026-08-15', toDate: '2026-08-15' }).length, 1);
   assert.equal(api.getDeliveryReportDate(deliveryTrip), '2026-08-15');
   assert.equal(api.filterDeliveryTrips([deliveryTrip], { fromDate: '2026-08-15', toDate: '2026-08-15' }).length, 1);
+});
+test('delivery report recognizes booking issue date from Google Sheets for date filtering', () => {
+  const result = api.analyzeDeliveryData([{
+    'เลขที่ใบจอง': 'BK-ISSUE-DATE',
+    'วันที่ออกใบจอง': '15/08/2569',
+    'สถานะ': 'กำลังจัดส่ง',
+  }]);
+  assert.equal(result.deliveryTrips.length, 1);
+  assert.equal(result.deliveryTrips[0].orderDate, '15/08/2569');
+  assert.equal(api.filterDeliveryTrips(result.deliveryTrips, {
+    fromDate: '2026-08-15',
+    toDate: '2026-08-15',
+  }).length, 1);
 });
 test('warehouse metrics summarize filtered records by booking date', () => {
   const metrics = api.calculateWarehouseMetrics([
