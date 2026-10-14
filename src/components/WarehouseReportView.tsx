@@ -196,7 +196,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
         return {
           'เลขที่ใบจอง': doc.docNo,
           'ลูกค้า': doc.customer || '-',
-          'วันที่เปิดบิลขาย': doc.salesOrderDate || '-',
+          'วันที่ใบจอง': doc.bookingDate || '-',
           'วันที่รับใบจอง': doc.receivedBookingDate || doc.date || '-',
           'วันที่จัดเสร็จ': doc.completedDate || '-',
           'จำนวนวันค้างจัดของ': isCompleted ? '-' : (getWarehousePendingDays(doc) ?? '-'),
@@ -504,7 +504,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
             <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200">คำนวณได้ {leadTimeStats.count.toLocaleString()} / {completedDocsCount.toLocaleString()} บิลจัดเสร็จ</span>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-            <p className="text-xs text-slate-500">วันที่จัดเสร็จ - วันที่เปิดบิลขาย ในช่วงวันที่ที่เลือก · อีก {leadTimeUnavailableDocs.length.toLocaleString()} บิลไม่มีคู่วันที่ที่ใช้คำนวณได้</p>
+            <p className="text-xs text-slate-500">วันที่จัดเสร็จ - วันที่ใบจอง ในช่วงวันที่ที่เลือก · อีก {leadTimeUnavailableDocs.length.toLocaleString()} บิลไม่มีคู่วันที่ที่ใช้คำนวณได้</p>
             {leadTimeUnavailableDocs.length > 0 && (
               <button
                 type="button"
@@ -551,7 +551,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
                 <thead className="sticky top-0 bg-white text-slate-600 font-bold border-b border-slate-200">
                   <tr>
                     <th className="py-2.5 px-4">เลขที่ใบจอง</th>
-                    <th className="py-2.5 px-4">วันที่เปิดบิลขาย</th>
+                    <th className="py-2.5 px-4">วันที่รับใบจอง</th>
                     <th className="py-2.5 px-4">วันที่จัดเสร็จ</th>
                     {expandedLeadTimeDetails === 'unavailable'
                       ? <th className="py-2.5 px-4">สาเหตุ</th>
@@ -563,7 +563,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
                     ? leadTimeUnavailableDocs.map(({ doc, reason }) => (
                       <tr key={doc.id || doc.docNo} className="hover:bg-slate-50/70">
                         <td className="py-2.5 px-4 font-mono font-semibold text-slate-800">{doc.docNo}</td>
-                        <td className="py-2.5 px-4">{doc.salesOrderDate || '-'}</td>
+                        <td className="py-2.5 px-4">{doc.bookingDate || '-'}</td>
                         <td className="py-2.5 px-4">{doc.completedDate || '-'}</td>
                         <td className="py-2.5 px-4 text-amber-700">{reason}</td>
                       </tr>
@@ -571,7 +571,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
                     : maximumLeadTimeRecords.map(({ doc, days }) => (
                       <tr key={doc.id || doc.docNo} className="hover:bg-slate-50/70">
                         <td className="py-2.5 px-4 font-mono font-semibold text-slate-800">{doc.docNo}</td>
-                        <td className="py-2.5 px-4">{doc.salesOrderDate || '-'}</td>
+                        <td className="py-2.5 px-4">{doc.bookingDate || '-'}</td>
                         <td className="py-2.5 px-4">{doc.completedDate || '-'}</td>
                         <td className="py-2.5 px-4 text-right font-bold text-rose-700">{days} วัน</td>
                       </tr>
@@ -596,7 +596,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
               </h3>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              แสดงเลขที่ใบจอง วันที่เปิดบิลขาย วันที่รับใบจอง วันที่จัดเสร็จ จำนวนวันค้างจัดของ (สำหรับบิลค้างจัด) ติดตาม Lead Time และกดดูรายการสินค้า (ทั้งหมด {filteredDocs.length} รายการ)
+              แสดงเลขที่ใบจอง วันที่รับใบจอง วันที่จัดเสร็จ จำนวนวันค้างจัดของ (สำหรับบิลค้างจัด) ติดตาม Lead Time และกดดูรายการสินค้า (ทั้งหมด {filteredDocs.length} รายการ)
             </p>
           </div>
 
@@ -646,7 +646,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
               <tr>
                 <th className="py-3.5 px-4 whitespace-nowrap">เลขที่ใบจอง</th>
                 <th className="py-3.5 px-4 whitespace-nowrap">ลูกค้า</th>
-                <th className="py-3.5 px-4 whitespace-nowrap">วันที่เปิดบิลขาย</th>
+                <th className="py-3.5 px-4 whitespace-nowrap">วันที่ใบจอง</th>
                 <th className="py-3.5 px-4 whitespace-nowrap">วันที่รับใบจอง</th>
                 <th className="py-3.5 px-4 whitespace-nowrap">วันที่จัดเสร็จ</th>
                 <th className="py-3.5 px-4 text-center bg-amber-50/80 text-amber-900 border-x border-amber-200/70 whitespace-nowrap">
@@ -661,7 +661,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
                     <Clock className="w-3 h-3 text-sky-600" />
                     <span>Lead Time (วัน)</span>
                   </div>
-                  <span className="text-[9px] font-normal normal-case block text-sky-700/80">เริ่มจากวันที่เปิดบิลขาย</span>
+                  <span className="text-[9px] font-normal normal-case block text-sky-700/80">เริ่มจากวันที่ใบจอง</span>
                 </th>
                 <th className="py-3.5 px-4 text-center whitespace-nowrap">
                   <div className="flex items-center justify-center gap-1">
