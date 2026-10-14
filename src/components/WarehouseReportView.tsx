@@ -1,5 +1,5 @@
 import { useReportTargets } from '../hooks/useReportTargets';
-import { aggregateWarehouseDocs, filterWarehouseDocs, calculateWarehouseMetrics, getPickingLeadTimeDays, isWarehouseDocCompleted, getWarehouseReportDate } from '../utils/logisticsReportMetrics';
+import { aggregateWarehouseDocs, filterWarehouseDocs, calculateWarehouseMetrics, getPickingLeadTimeDays, getWarehousePendingDays, isWarehouseDocCompleted, getWarehouseReportDate } from '../utils/logisticsReportMetrics';
 import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { WarehouseDoc, DetailedSalesOrder, SalesOrderItem, AuthUser } from '../types';
@@ -199,7 +199,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
           'วันที่เปิดบิลขาย': doc.salesOrderDate || '-',
           'วันที่รับใบจอง': doc.receivedBookingDate || doc.date || '-',
           'วันที่จัดเสร็จ': doc.completedDate || '-',
-          'จำนวนวันค้างจัดของ': isCompleted ? '-' : (doc.pendingDays ?? '-'),
+          'จำนวนวันค้างจัดของ': isCompleted ? '-' : (getWarehousePendingDays(doc) ?? '-'),
           'Lead Time (วัน)': getPickingLeadTimeDays(doc) ?? '-',
           'จำนวนรายการ': doc.itemsCount,
         };
@@ -654,7 +654,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
                     <Hourglass className="w-3 h-3 text-amber-600" />
                     <span>จำนวนวันค้างจัดของ</span>
                   </div>
-                  <span className="text-[9px] font-normal normal-case block text-amber-700/80">ปัจจุบัน - วันที่เปิดบิลขาย</span>
+                  <span className="text-[9px] font-normal normal-case block text-amber-700/80">ปัจจุบัน - วันที่รับใบจอง</span>
                 </th>
                 <th className="py-3.5 px-4 text-center bg-sky-50/80 text-sky-900 border-r border-sky-200/70 whitespace-nowrap">
                   <div className="flex items-center justify-center gap-1">
@@ -701,7 +701,8 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
                   const isCompleted = isWarehouseDocCompleted(doc);
                   const isPending = !isCompleted;
                   const isDelayed = isDocDelayed(doc);
-                  const isOverTargetPending = isPending && (doc.pendingDays || 0) > pickingLeadTimeTarget;
+                  const warehousePendingDays = getWarehousePendingDays(doc);
+                  const isOverTargetPending = isPending && (warehousePendingDays || 0) > pickingLeadTimeTarget;
                   const leadTimeDays = getPickingLeadTimeDays(doc);
 
                   return (
@@ -743,18 +744,18 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
                         ) : (
                           <div className="inline-flex flex-col items-center">
                             <span className={`inline-flex items-center justify-center gap-1 px-2.5 py-0.5 rounded-full font-black text-xs ${
-                              (doc.pendingDays || 0) > pickingLeadTimeTarget
+                              (warehousePendingDays || 0) > pickingLeadTimeTarget
                                 ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                                : (doc.pendingDays || 0) >= 2
+                                : (warehousePendingDays || 0) >= 2
                                 ? 'bg-amber-100 text-amber-900 border border-amber-300'
                                 : 'bg-amber-50 text-amber-800 border border-amber-200'
                             }`}>
                               <Hourglass className="w-3 h-3" />
-                              <span>{doc.pendingDays === undefined ? '-' : `${doc.pendingDays} วัน`}</span>
+                              <span>{warehousePendingDays === undefined ? '-' : `${warehousePendingDays} วัน`}</span>
                             </span>
-                            {(doc.pendingDays || 0) > pickingLeadTimeTarget && (
+                            {(warehousePendingDays || 0) > pickingLeadTimeTarget && (
                               <span className="text-[10px] text-rose-600 font-bold mt-0.5">
-                                เกินเป้า {(doc.pendingDays || 0) - pickingLeadTimeTarget} วัน
+                                เกินเป้า {(warehousePendingDays || 0) - pickingLeadTimeTarget} วัน
                               </span>
                             )}
                           </div>

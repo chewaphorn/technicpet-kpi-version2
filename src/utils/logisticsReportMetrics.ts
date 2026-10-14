@@ -10,6 +10,11 @@ export interface ReportRowFilters { fromDate?: string; toDate?: string; search?:
 export const getWarehouseReportDate = (doc: WarehouseDoc): string =>
   normalizeDateToISO(doc.receivedBookingDate) || normalizeDateToISO(doc.date);
 
+export const getWarehousePendingDays = (doc: WarehouseDoc): number | undefined => {
+  const days = warehouseDays(getWarehouseReportDate(doc), new Date());
+  return days === undefined ? undefined : Math.max(0, days);
+};
+
 export const getDeliveryReportDate = (trip: DeliveryTrip): string =>
   normalizeDateToISO(trip.plannedDate) || normalizeDateToISO(trip.orderDate) ||
   normalizeDateToISO(trip.handoffDate) || normalizeDateToISO(trip.handoverDate) ||
