@@ -41,6 +41,7 @@ export interface WarehouseDoc {
   docNo: string;
   customer: string;
   salesOrderDate?: string; // วันที่เปิดบิลจากข้อมูลฝ่ายขาย
+  bookingDate?: string; // วันที่ออกใบจองจากข้อมูลคลัง
   date?: string; // วันที่ของเอกสารใบจอง/เบิก
   completedDate?: string; // วันที่จัดของเสร็จสมบูรณ์
   receivedBookingDate?: string;

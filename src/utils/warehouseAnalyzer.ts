@@ -214,6 +214,7 @@ export function analyzeWarehouseData(
         docNo,
         customer,
         salesOrderDate: salesOrderDate || undefined,
+        bookingDate: docDate || undefined,
         date: effectiveDocDate,
         completedDate,
         receivedBookingDate,
@@ -282,6 +283,7 @@ export function analyzeWarehouseData(
       existing.statusLabel = finalStatusLabel;
       if (doc.completedDate && (!existing.completedDate || doc.completedDate > existing.completedDate)) existing.completedDate = doc.completedDate;
       if (doc.date && (!existing.date || doc.date < existing.date)) existing.date = doc.date;
+      if (doc.bookingDate && (!existing.bookingDate || doc.bookingDate < existing.bookingDate)) existing.bookingDate = doc.bookingDate;
       if (doc.salesOrderDate && !existing.salesOrderDate) existing.salesOrderDate = doc.salesOrderDate;
       if (doc.receivedBookingDate && (!existing.receivedBookingDate || doc.receivedBookingDate < existing.receivedBookingDate)) existing.receivedBookingDate = doc.receivedBookingDate;
       existing.transferredToDelivery = Boolean(existing.transferredToDelivery || doc.transferredToDelivery);
@@ -300,7 +302,10 @@ export function analyzeWarehouseData(
   // Recompute from the merged dates; never retain stale pending/delay values
   // from an earlier duplicate row once the booking has completed.
   for (const doc of calculatedWarehouseDocs) {
-    doc.leadTimeDays = warehouseDays(doc.salesOrderDate, doc.completedDate);
+    doc.leadTimeDays = warehouseDays(
+      doc.salesOrderDate || doc.bookingDate || doc.receivedBookingDate || doc.date,
+      doc.completedDate,
+    );
     if (doc.status === 'completed' || doc.status === 'verified') {
       doc.pendingDays = undefined;
       doc.delayDays = Math.max(0, (doc.leadTimeDays ?? 0) - 3);

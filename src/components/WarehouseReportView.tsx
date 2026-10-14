@@ -196,7 +196,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
         return {
           'เลขที่ใบจอง': doc.docNo,
           'ลูกค้า': doc.customer || '-',
-          'วันที่ใบจอง': doc.bookingDate || '-',
+          'วันที่ออกใบจอง': doc.bookingDate || '-',
           'วันที่รับใบจอง': doc.receivedBookingDate || doc.date || '-',
           'วันที่จัดเสร็จ': doc.completedDate || '-',
           'จำนวนวันค้างจัดของ': isCompleted ? '-' : (getWarehousePendingDays(doc) ?? '-'),
@@ -646,7 +646,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
               <tr>
                 <th className="py-3.5 px-4 whitespace-nowrap">เลขที่ใบจอง</th>
                 <th className="py-3.5 px-4 whitespace-nowrap">ลูกค้า</th>
-                <th className="py-3.5 px-4 whitespace-nowrap">วันที่ใบจอง</th>
+                <th className="py-3.5 px-4 whitespace-nowrap">วันที่ออกใบจอง</th>
                 <th className="py-3.5 px-4 whitespace-nowrap">วันที่รับใบจอง</th>
                 <th className="py-3.5 px-4 whitespace-nowrap">วันที่จัดเสร็จ</th>
                 <th className="py-3.5 px-4 text-center bg-amber-50/80 text-amber-900 border-x border-amber-200/70 whitespace-nowrap">
@@ -731,7 +731,7 @@ export const WarehouseReportView: React.FC<WarehouseReportViewProps> = ({
                         {doc.customer || '-'}
                       </td>
 
-                      <td className="py-3.5 px-4 text-slate-600 font-mono text-[11px] whitespace-nowrap">{doc.salesOrderDate || '-'}</td>
+                      <td className="py-3.5 px-4 text-slate-600 font-mono text-[11px] whitespace-nowrap">{doc.bookingDate || '-'}</td>
                       <td className="py-3.5 px-4 text-slate-600 font-mono text-[11px] whitespace-nowrap">{doc.receivedBookingDate || doc.date || '-'}</td>
                       <td className="py-3.5 px-4 text-slate-700 font-mono text-[11px] whitespace-nowrap">
                         {doc.completedDate || '-'}

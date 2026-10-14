@@ -20,14 +20,10 @@ export const getDeliveryReportDate = (trip: DeliveryTrip): string =>
   normalizeDateToISO(trip.handoffDate) || normalizeDateToISO(trip.handoverDate) ||
   normalizeDateToISO(trip.loadedDate);
 
-/**
- * Calculate calendar-day picking lead time from the sales opening date.
- * This is deliberately date-pair based so the KPI cannot silently use a
- * previously stored value when either the sales opening or completion date is absent.
- */
+/** Calculate completed picking time from the best available booking start date. */
 export const calculatePickingLeadTimeDays = (doc: WarehouseDoc): number | undefined => {
   const calculated = warehouseDays(
-    doc.salesOrderDate,
+    doc.salesOrderDate || doc.bookingDate || doc.receivedBookingDate || doc.date,
     doc.completedDate
   );
   if (calculated !== undefined && calculated >= 0) return calculated;
@@ -109,6 +105,7 @@ export function aggregateWarehouseDocs(
         const salesItemsForRow = salesItems.length > 0 ? salesItems : mergedItems;
         map.set(key, {
           ...existing,
+          bookingDate: [existing.bookingDate, doc.bookingDate].map(warehouseDate).filter(Boolean).sort()[0] || undefined,
           receivedBookingDate: [existing.receivedBookingDate, doc.receivedBookingDate].map(warehouseDate).filter(Boolean).sort()[0] || undefined,
           status: finalStatus,
           statusLabel: finalStatusLabel,

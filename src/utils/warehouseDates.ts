@@ -37,5 +37,5 @@ export function warehouseDays(start: unknown, end: unknown): number | undefined 
 }
 
 export const warehouseReceivedAliases = ['รับใบจอง', 'วันที่รับใบจอง', 'วันที่รับเอกสาร', 'received_work_date', 'receivedBookingDate', 'received_date'];
-export const warehouseDocDateAliases = ['วันที่', 'วันที่เอกสาร', 'วันที่ใบจอง', 'date', 'docDate', 'snapshot_date', 'order_date'];
+export const warehouseDocDateAliases = ['วันที่ออกใบจอง', 'วันที่', 'วันที่เอกสาร', 'วันที่ใบจอง', 'date', 'docDate', 'snapshot_date', 'order_date'];
 export const warehouseSalesOrderDateAliases = ['วันที่เปิดบิลขาย', 'วันที่เปิดบิล', 'วันที่ออกบิลขาย', 'salesOrderDate', 'sales_order_date', 'sales_order_created_date'];

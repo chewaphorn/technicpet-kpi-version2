@@ -22,6 +22,14 @@ test('CSV import preserves real source column names and sales opening date', () 
   assert.equal(doc.status, 'completed');
   assert.equal(api.calculateWarehouseMetrics([doc]).leadTimeStats.mean, 0);
 });
+test('booking issue date is parsed separately from receipt date and retained across duplicate rows', () => {
+  const doc = analyze([
+    row({ 'วันที่ออกใบจอง': '', 'วันที่รับเอกสาร': '2026-09-29' }),
+    row({ 'วันที่ออกใบจอง': '2026-09-28', 'วันที่รับเอกสาร': '2026-09-29' }),
+  ]).warehouseDocs[0];
+  assert.equal(doc.bookingDate, '2026-09-28');
+  assert.equal(doc.receivedBookingDate, '2026-09-29');
+});
 test('sales opening date from the Google Sheet is normalized and retained across duplicate rows', () => {
   const docs = analyze([
     row({ 'วันที่เปิดบิลขาย': '' }),
@@ -59,8 +67,20 @@ test('picking lead time starts at sales opening date, not warehouse receipt date
   assert.equal(api.getPickingLeadTimeDays(doc), 5);
   assert.equal(api.calculateWarehouseMetrics([doc]).leadTimeStats.mean, 5);
 });
-test('picking lead time is omitted when the sales opening date is missing', () => {
+test('picking lead time falls back to booking issue date when sales opening date is missing', () => {
+  const doc = analyze([row({ 'วันที่เปิดบิลขาย': '', 'วันที่ออกใบจอง': '2026-09-25', 'วันที่รับเอกสาร': '2026-09-28', 'วันที่จัดเสร็จ': '2026-09-30' })]).warehouseDocs[0];
+  assert.equal(doc.bookingDate, '2026-09-25');
+  assert.equal(doc.leadTimeDays, 5);
+  assert.equal(api.getPickingLeadTimeDays(doc), 5);
+});
+test('picking lead time falls back to receipt date when other start dates are missing', () => {
   const doc = analyze([row({ 'วันที่เปิดบิลขาย': '', 'วันที่รับเอกสาร': '2026-09-28', 'วันที่จัดเสร็จ': '2026-09-30' })]).warehouseDocs[0];
+  assert.equal(doc.salesOrderDate, undefined);
+  assert.equal(doc.leadTimeDays, 2);
+  assert.equal(api.getPickingLeadTimeDays(doc), 2);
+});
+test('picking lead time is omitted when the sales opening date is missing', () => {
+  const doc = analyze([row({ 'วันที่เปิดบิลขาย': '', 'วันที่รับเอกสาร': '', 'วันที่จัดเสร็จ': '2026-09-30' })]).warehouseDocs[0];
   assert.equal(doc.leadTimeDays, undefined);
   assert.equal(api.calculateWarehouseMetrics([doc]).leadTimeStats.count, 0);
 });
@@ -141,7 +161,7 @@ test('all downloaded source rows retain completion dates after CSV analysis', { 
   for (const source of dated) assert.ok(result.warehouseDocs.find(doc => doc.docNo === source['เลขที่ใบจอง'])?.completedDate, source['เลขที่ใบจอง']);
   const doc = result.warehouseDocs.find(doc => doc.docNo === 'BK256909/03360');
   assert.equal(doc.completedDate, '2026-09-29');
-  assert.equal(doc.leadTimeDays, undefined);
+  assert.equal(doc.leadTimeDays, 0);
   console.log(`Source audit: ${parsed.rowCount} rows, ${result.totalDocs} documents, ${dated.length} completion dates retained.`);
 });
 test('failed explicit tab never falls back to a default department tab', async () => {
